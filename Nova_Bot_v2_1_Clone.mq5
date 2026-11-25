@@ -1,10 +1,10 @@
 //+------------------------------------------------------------------+
-//|                                            Nova_Bot_v2_1_Clone.mq5 |
-//|                Estrategia Nova - Clon de Prueba v2.1             |
-//|   Setup 1, Setup 2 Nac/Cont + Filtro Setup 3 + Reglas 09:30/15:40|
+//|                                            Nova_Bot_v2_3_Clone.mq5 |
+//|           Estrategia Nova - Fusión v2.1 + v2.2 (v2.3 Clone)      |
+//|   S1 (PB=3) + S2 Nac (Motor v2.1) + S2 Cont Autónomo (Motor v2.2)|
 //+------------------------------------------------------------------+
 #property copyright "Estrategia Nova"
-#property version   "2.10"
+#property version   "2.30"
 
 #include <Trade\Trade.mqh>
 
@@ -38,9 +38,9 @@ input bool   InpEnableSetup1         = true;            // Activar Setup 1 (Comp
 input bool   InpEnableSetup2Nac      = true;            // Activar Setup 2 Nacimiento (Compras y Ventas)
 input bool   InpEnableSetup2Cont     = true;            // Activar Setup 2 Continuación (Piramidación)
 input bool   InpEnableSetup3Filter   = true;            // Activar Filtro Setup 3 (Bloquear barrido bilateral)
-input int    InpPullbackCandles      = 1;               // Velas contrarias/pausa para fijar 1Qe y 2Qe
+input int    InpPullbackCandles      = 3;               // Velas contrarias/pausa para fijar 1Qe y 2Qe
 input bool   InpDirect2QeEntry       = true;            // Colocar Buy/Sell Stop directo en 2Qe
-input bool   InpS1_AllowDeepPullback = false;            // Permitir retroceso profundo antes de 1Qe en S1
+input bool   InpS1_AllowDeepPullback = true;            // Permitir retroceso profundo antes de 1Qe en S1
 input bool   InpUseOptimizedTrail    = false;           // false = Trailing estricto original Nova
 input bool   InpFilter930Open        = true;            // Gestionar trades abiertos a las 09:29 NY
 input bool   InpClose1540Rule        = true;            // Cerrar BE / leve negativo a las 15:40 NY
@@ -58,6 +58,7 @@ input double InpS2N_1QR_Pct          = 0.05;            // Setup 2 Nac: Quiebre/
 input double InpS2N_EntryLevelPct    = 75.0;            // Nivel de entrada dentro del rango (%) [75% del rango]
 input double InpS2N_SL_AgresPct      = 0.25;            // Distancia > X% para SL Agresivo (Inicio Rango)
 input double InpS2N_SL_ModMinPct     = 0.15;            // Distancia >= X% para SL Moderado
+input bool   InpS2N_FastTrail080     = true;            // true = Trailing rápido S2N en +0.80 RR (Motor v2.1)
 input bool   InpS2N_AvoidOpen10AM    = true;            // Bloquear barridos 1QR S2 Nac entre 09:25 y 09:55 NY
 
 input group "=== 6. RATIO RIESGO / RECOMPENSA (TP en R) ==="
@@ -159,7 +160,7 @@ int            g_FirstBreakDir    = 0;
 bool           g_Setup3Triggered  = false;
 bool           g_HitHigh          = false;
 bool           g_HitLow           = false;
-int            g_S3SecondSide     = 0;     // 1 = rompió High en 2do lugar, -1 = rompió Low en 2do lugar
+int            g_S3SecondSide     = 0;
 
 //--- Traza de diagnóstico
 int            g_TraceHandle      = INVALID_HANDLE;
@@ -203,7 +204,7 @@ void TraceInit()
    StringReplace(tag, ".", "-");
    StringReplace(tag, "\\", "-");
    StringReplace(tag, "/", "-");
-   g_TraceFile = "Nova_v2_1_trace_" + tag + ".csv";
+   g_TraceFile = "Nova_v2_3_trace_" + tag + ".csv";
 
    g_TraceHandle = FileOpen(g_TraceFile, FILE_WRITE|FILE_CSV|FILE_ANSI|FILE_COMMON, ';');
    if(g_TraceHandle == INVALID_HANDLE)
@@ -214,7 +215,7 @@ void TraceInit()
 
    FileWrite(g_TraceHandle, "seq", "srv_time", "ny_time", "event", "setup", "dir",
              "p1", "p2", "p3", "p4", "note");
-   Print("NOVA v2.1 traza activa -> Common\\Files\\", g_TraceFile);
+   Print("NOVA v2.3 traza activa -> Common\\Files\\", g_TraceFile);
   }
 
 void TraceClose()
@@ -273,11 +274,10 @@ int OnInit()
 
    TraceInit();
 
-   Print("NOVA v2.1 CLONE | ", _Symbol, " ", EnumToString(_Period),
-         " | offsetNY=", InpServerOffsetFromNY, "h | riesgo=", DoubleToString(InpRiskPercent, 2), "%",
-         " | S3=", (InpEnableSetup3Filter ? "ON" : "OFF"),
-         " | 930=", (InpFilter930Open ? "ON" : "OFF"),
-         " | 1540=", (InpClose1540Rule ? "ON" : "OFF"));
+   Print("NOVA v2.3 FUSION | ", _Symbol, " ", EnumToString(_Period),
+         " | PB=", InpPullbackCandles,
+         " | S2N_Fast080=", (InpS2N_FastTrail080 ? "ON" : "OFF"),
+         " | S3=", (InpEnableSetup3Filter ? "ON" : "OFF"));
 
    if(InpUseNewsFilter)
       ActualizarCalendarioNoticias(true);
@@ -566,13 +566,12 @@ bool EvaluarFiltroSetup3(double open1, double high1, double low1, double close1,
    if(!InpEnableSetup3Filter) return false;
    if(g_SessionBlockedS3) return true;
 
-   // 1. Registrar salida por ambos extremos del rango
    if(high1 > g_RangeHigh)
      {
       if(!g_HitHigh)
         {
          g_HitHigh = true;
-         if(g_HitLow && g_S3SecondSide == 0) g_S3SecondSide = 1; // Salió por Low y luego por High
+         if(g_HitLow && g_S3SecondSide == 0) g_S3SecondSide = 1;
         }
      }
    if(low1 < g_RangeLow)
@@ -580,11 +579,10 @@ bool EvaluarFiltroSetup3(double open1, double high1, double low1, double close1,
       if(!g_HitLow)
         {
          g_HitLow = true;
-         if(g_HitHigh && g_S3SecondSide == 0) g_S3SecondSide = -1; // Salió por High y luego por Low
+         if(g_HitHigh && g_S3SecondSide == 0) g_S3SecondSide = -1;
         }
      }
 
-   // 2. Si salió por ambos lados y retoma dirección contraria reingresando al rango con cuerpo
    if(g_HitHigh && g_HitLow)
      {
       bool giroContrarioBajista = (g_S3SecondSide == 1  && close1 < g_RangeHigh && close1 < open1);
@@ -638,19 +636,32 @@ void EvaluarVela(datetime nyTime, int shift, bool soloReconstruccion)
    double s2nBuy1QR  = g_RangeLow  * (1.0 - InpS2N_1QR_Pct / 100.0);
    double s2nSell1QR = g_RangeHigh * (1.0 + InpS2N_1QR_Pct / 100.0);
 
+   //--- Registro autónomo del primer quiebre/barrido del rango (>= 0.05%) para Setup 2 Continuación
+   if(!g_HadSideBreakout)
+     {
+      if(low1 <= s2nBuy1QR)
+        {
+         g_HadSideBreakout = true;
+         g_FirstBreakDir   = -1;
+        }
+      else if(high1 >= s2nSell1QR)
+        {
+         g_HadSideBreakout = true;
+         g_FirstBreakDir   = 1;
+        }
+     }
+
    //--- A. Setup 1: Activación inicial (1QR >= 0.20% con cuerpo)
    if(InpEnableSetup1 && !enLatigazo930 && g_S1.stage == QE_INACTIVE && g_S1.tradesToday == 0)
      {
       if(close1 >= s1Buy1QR && close1 > open1)
         {
          g_S1.dir = 1; g_S1.extreme = high1; g_S1.pbCount = 0; g_S1.stage = QE_WAIT_1QE_PB;
-         if(!g_HadSideBreakout) { g_HadSideBreakout = true; g_FirstBreakDir = 1; }
          DibujarNivelEstructura("NOVA_S1_1QR_" + TimeToString(time1), time1, high1, "S1 1QR", clrDodgerBlue, true);
         }
       else if(close1 <= s1Sell1QR && close1 < open1)
         {
          g_S1.dir = -1; g_S1.extreme = low1; g_S1.pbCount = 0; g_S1.stage = QE_WAIT_1QE_PB;
-         if(!g_HadSideBreakout) { g_HadSideBreakout = true; g_FirstBreakDir = -1; }
          DibujarNivelEstructura("NOVA_S1_1QR_" + TimeToString(time1), time1, low1, "S1 1QR", clrCrimson, false);
         }
      }
@@ -662,23 +673,21 @@ void EvaluarVela(datetime nyTime, int shift, bool soloReconstruccion)
         {
          g_S2NDir = 1; g_S2NExtreme = low1; g_S2NCHLevel = high1;
          g_S2NCHEstablished = false; g_S2NStage = S2N_WAIT_BOUNCE;
-         if(!g_HadSideBreakout) { g_HadSideBreakout = true; g_FirstBreakDir = -1; }
          DibujarNivelEstructura("NOVA_S2N_1QR_" + TimeToString(time1), time1, low1, "S2 Nac 1QR", clrDarkOrange, false);
         }
       else if(high1 >= s2nSell1QR)
         {
          g_S2NDir = -1; g_S2NExtreme = high1; g_S2NCHLevel = low1;
          g_S2NCHEstablished = false; g_S2NStage = S2N_WAIT_BOUNCE;
-         if(!g_HadSideBreakout) { g_HadSideBreakout = true; g_FirstBreakDir = 1; }
          DibujarNivelEstructura("NOVA_S2N_1QR_" + TimeToString(time1), time1, high1, "S2 Nac 1QR", clrDarkOrange, true);
         }
      }
 
-   //--- C. Progresión Setup 2 Nacimiento
+   //--- C. Progresión Setup 2 Nacimiento (Motor v2.1)
    if(InpEnableSetup2Nac && g_S2NStage != S2N_WAIT_1QR && g_S2NStage != S2N_FINISHED)
       ProcesarSetup2NacimientoVela(open1, high1, low1, close1, time1, soloReconstruccion);
 
-   //--- D. Setup 2 Continuación: Quiebre opuesto >= 0.15% con cuerpo
+   //--- D. Setup 2 Continuación: Quiebre opuesto >= 0.15% con cuerpo (Autónomo v2.2)
    if(InpEnableSetup2Cont && !enLatigazo930 && g_HadSideBreakout && g_S2C.stage == QE_INACTIVE && g_S2C.tradesToday == 0)
      {
       double s2cBuy2QR  = g_RangeHigh * (1.0 + InpS2C_2QR_Pct / 100.0);
@@ -708,7 +717,7 @@ void ProcesarSetup2NacimientoVela(double open1, double high1, double low1, doubl
   {
    if(g_S2NStage == S2N_ORDER_ACTIVE || g_S2NStage == S2N_IN_TRADE) return;
 
-   if(g_S2NDir == 1)
+   if(g_S2NDir == 1) // Compra: 0% INICIO = Low
      {
       if(low1 < g_S2NExtreme)
         {
@@ -728,7 +737,7 @@ void ProcesarSetup2NacimientoVela(double open1, double high1, double low1, doubl
             ConfirmarYColocarS2Nac(time1, soloReconstruccion);
         }
      }
-   else if(g_S2NDir == -1)
+   else if(g_S2NDir == -1) // Venta: 0% INICIO = High
      {
       if(high1 > g_S2NExtreme)
         {
@@ -1179,13 +1188,30 @@ void GestionarSetup2Nacimiento(datetime nyTime, datetime srvTime, datetime nyLas
             continue;
            }
 
-         // Gestión S2N con protección y trailing estructural
-         if(currentRR >= 0.50 && currentRR < 0.80)
-            MoverSLSeguro(ticket, posType, curSL, (posType == POSITION_TYPE_BUY) ? openPrice - g_S2NInitRisk * 0.25 : openPrice + g_S2NInitRisk * 0.25, curTP, "S2N_BE");
-         else if(currentRR >= 0.80)
+         // Regla 4: Gestión RR (Motor v2.1 con trailing rápido en +0.80 RR por defecto)
+         if(InpS2N_FastTrail080)
            {
-            double structSL = ObtenerSoportesResistenciasM5(posType);
-            if(structSL > 0) MoverSLSeguro(ticket, posType, curSL, structSL, curTP, "S2N_TRAIL");
+            if(currentRR >= 0.50 && currentRR < 0.80)
+               MoverSLSeguro(ticket, posType, curSL, (posType == POSITION_TYPE_BUY) ? openPrice - g_S2NInitRisk * 0.25 : openPrice + g_S2NInitRisk * 0.25, curTP, "S2N_BE");
+            else if(currentRR >= 0.80)
+              {
+               double structSL = ObtenerSoportesResistenciasM5(posType);
+               if(structSL > 0) MoverSLSeguro(ticket, posType, curSL, structSL, curTP, "S2N_TRAIL");
+              }
+           }
+         else
+           {
+            if(currentRR >= 0.50 && currentRR < 0.80)
+               MoverSLSeguro(ticket, posType, curSL, (posType == POSITION_TYPE_BUY) ? openPrice - g_S2NInitRisk * 0.25 : openPrice + g_S2NInitRisk * 0.25, curTP, "S2N_RR_0.50");
+            else if(currentRR >= 0.80 && currentRR < 1.18)
+               MoverSLSeguro(ticket, posType, curSL, (posType == POSITION_TYPE_BUY) ? openPrice + g_S2NInitRisk * 0.50 : openPrice - g_S2NInitRisk * 0.50, curTP, "S2N_RR_0.80");
+            else if(currentRR >= 1.18 && currentRR < 1.50)
+               MoverSLSeguro(ticket, posType, curSL, (posType == POSITION_TYPE_BUY) ? openPrice + g_S2NInitRisk * 1.15 : openPrice - g_S2NInitRisk * 1.15, curTP, "S2N_RR_1.18");
+            else if(currentRR >= 1.50)
+              {
+               double structSL = ObtenerSoportesResistenciasM5(posType);
+               if(structSL > 0) MoverSLSeguro(ticket, posType, curSL, structSL, curTP, "S2N_TRAIL_EST");
+              }
            }
         }
      }
@@ -1469,7 +1495,7 @@ void ActualizarHUD(datetime nyTime, string estado, color clrEstado)
                       DoubleToString(g_RangeHigh, _Digits) + " - " + DoubleToString(g_RangeLow, _Digits) + " (" + DoubleToString(g_RangePct, 2) + "%)" :
                       "Calculando...";
 
-   SetHudLine(0, x + 12, y + 10,  "NOVA BOT v2.1 CLONE   |   NAS100 M5", clrGold, 9, true);
+   SetHudLine(0, x + 12, y + 10,  "NOVA BOT v2.3 FUSION  |   NAS100 M5", clrGold, 9, true);
    SetHudLine(1, x + 12, y + 32,  "NY: " + TimeToString(nyTime, TIME_DATE|TIME_MINUTES) + "  |  " + estado, clrEstado, 8, false);
    SetHudLine(2, x + 12, y + 50,  "Rango 02-07:  " + rangoTxt, clrWhite, 8, false);
    SetHudLine(3, x + 12, y + 68,  "Riesgo / Op:  " + DoubleToString(InpRiskPercent, 2) + "%  ($" + DoubleToString(riesgoUSD, 2) + ")", clrSilver, 8, false);
