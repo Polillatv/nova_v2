@@ -1,4 +1,4 @@
-//+------------------------------------------------------------------+
+﻿//+------------------------------------------------------------------+
 //|                                                  Nova_Bot_v3_1.mq5 |
 //|           Estrategia Nova - Edición Unificada Producción v3.11   |
 //|   Calibración Fiel Backtest Manual + Bullfy + DST Auto + S1/2/3  |

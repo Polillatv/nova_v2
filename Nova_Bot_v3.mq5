@@ -1,11 +1,11 @@
-//+------------------------------------------------------------------+
+﻿//+------------------------------------------------------------------+
 //|                                                  Nova_Bot_v3.mq5 |
-//|           Estrategia Nova - Edición Unificada Producción v3.10   |
+//|           Estrategia Nova - Edición Híbrida Unificada v3.13      |
 //|   Calibración Fiel Backtest Manual + Bullfy + DST Auto + S1/2/3  |
-//|   S2C invalida S1 + 2Qe Directo + Trailing 1.80R/2.0R + Swings   |
+//|   Trailing Desacoplado: Qe (ATR+Swing v3.11) + S2N (Swing v3.10) |
 //+------------------------------------------------------------------+
 #property copyright "Estrategia Nova"
-#property version   "3.10"
+#property version   "3.13"
 
 #include <Trade\Trade.mqh>
 
@@ -20,8 +20,9 @@ enum ENUM_QE_PB_MODE
 
 enum ENUM_TRAIL_MODE
   {
-   TRAIL_NOVA_SWING = 0,         // Estándar Nova (+0.50/-0.25, +0.80/+0.50, +1.80/+1.15, >=2.00 swings)
-   TRAIL_OPTIMIZED  = 1          // Optimizado (+0.65/BE, +1.00/+0.50, +1.50/+1.00, >=2.00 swings)
+   TRAIL_NOVA_SWING = 0,         // Estándar Nova v3.10 (+0.50/-0.25, +0.80/+0.50, +1.80/+1.15, >=2.00 swings)
+   TRAIL_OPTIMIZED  = 1,         // Optimizado (+0.65/BE, +1.00/+0.50, +1.50/+1.00, >=2.00 swings)
+   TRAIL_ATR_SWING  = 2          // Activo Qe v3.13 (escalones 1.2/1.5/1.8R + swings >=1.5R + ATR fallback)
   };
 
 input group "=== 1. HORARIOS, DST Y GRÁFICO ==="
@@ -108,26 +109,39 @@ input double InpS2N_SL_AgresSweepFrac   = 0.50;          // Fracción de barrido
 input int    InpS2N_MaxTradesPerDay     = 1;             // Máximo de trades Setup 2 Nacimiento por día
 input bool   InpS2N_AvoidOpen10AM       = false;         // Bloquear barridos 1QR S2 Nac entre 09:25 y 09:55 NY
 
-input group "=== 6. GESTIÓN, TRAILING, JUDAS Y ABLACIÓN ==="
-input bool            InpExit_Grace         = true;      // Activar salida por hora de gracia (1 sola vez a los 60m)
-input bool            InpExit_Open930       = true;      // Activar gestión apertura 09:30 NY
-input bool            InpExit_Trailing      = true;      // Activar trailing por RR y swings
-input bool            InpExit_EndOfDay      = true;      // Activar cierre 15:40 NY
-input ENUM_TRAIL_MODE InpTrailMode          = TRAIL_NOVA_SWING; // Modo de trailing por RR
-input double          InpTrail_Step1_TrigRR = 0.50;      // Escalón 1: activar al llegar a +X RR
-input double          InpTrail_Step1_SL_RR  = -0.25;     // Escalón 1: mover SL a X RR (-0.25R)
-input double          InpTrail_Step2_TrigRR = 0.80;      // Escalón 2: activar al llegar a +X RR
-input double          InpTrail_Step2_SL_RR  = 0.50;      // Escalón 2: mover SL a +X RR (+0.50R)
-input double          InpTrail_Step3_TrigRR = 1.80;      // Escalón 3: activar al llegar a +X RR (+1.80R)
-input double          InpTrail_Step3_SL_RR  = 1.15;      // Escalón 3: mover SL a +X RR (+1.15R)
-input double          InpTrail_SwingStartRR = 2.00;      // Desde +X RR seguir swings fractales reales M5 hasta TP
-input int             InpSwingFractalBars   = 2;         // Velas a cada lado para swing fractal M5
-input int             InpSwingLookbackBars  = 40;        // Máximo de velas M5 para buscar swings
-input bool            InpEnableJudasCut     = false;     // Cortar en contra cerca de -0.50 RR (Judas)
-input double          InpJudasTriggerRR     = -0.50;     // Umbral RR negativo para corte Judas
-input double          InpTP_R_S1            = 5.0;       // TP Setup 1 (múltiplo de R)
-input double          InpTP_R_S2C           = 5.0;       // TP Setup 2 Continuación (múltiplo de R)
-input double          InpTP_R_S2N           = 4.0;       // TP Setup 2 Nacimiento (múltiplo de R)
+input group "=== 6. GESTIÓN, TRAILING HÍBRIDO, JUDAS Y ABLACIÓN ==="
+input bool            InpExit_Grace                 = true;      // Activar salida por hora de gracia (1 sola vez a los 60m)
+input bool            InpExit_Open930               = true;      // Activar gestión apertura 09:30 NY
+input bool            InpExit_Trailing              = true;      // Activar trailing por RR y swings
+input bool            InpExit_EndOfDay              = true;      // Activar cierre 15:40 NY
+input ENUM_TRAIL_MODE InpTrailModeQe                = TRAIL_ATR_SWING;  // Modo de trailing para Setup 1 y Setup 2 Cont (Motor Qe)
+input ENUM_TRAIL_MODE InpTrailModeS2N               = TRAIL_NOVA_SWING; // Modo de trailing para Setup 2 Nacimiento
+input double          InpTrail_Step1_TrigRR         = 0.50;      // Escalón 1 (común): activar al llegar a +X RR
+input double          InpTrail_Step1_SL_RR          = -0.25;     // Escalón 1 (común): mover SL a X RR (-0.25R)
+input double          InpTrail_Step2_TrigRR         = 0.80;      // Escalón 2 (común): activar al llegar a +X RR
+input double          InpTrail_Step2_SL_RR          = 0.50;      // Escalón 2 (común): mover SL a +X RR (+0.50R)
+input double          InpTrail_Step3_TrigRR         = 1.80;      // [NOVA_SWING] Escalón 3: activar al llegar a +X RR (+1.80R)
+input double          InpTrail_Step3_SL_RR          = 1.15;      // [NOVA_SWING] Escalón 3: mover SL a +X RR (+1.15R)
+input double          InpTrail_SwingStartRR         = 2.00;      // [NOVA_SWING] Desde +X RR seguir swings fractales M5
+input double          InpTrailX_Step3_TrigRR        = 1.20;      // [ATR_SWING] Escalón extra A: activar a +X RR
+input double          InpTrailX_Step3_SL_RR         = 0.70;      // [ATR_SWING] Escalón extra A: SL a +X RR
+input double          InpTrailX_Step4_TrigRR        = 1.50;      // [ATR_SWING] Escalón extra B: activar a +X RR
+input double          InpTrailX_Step4_SL_RR         = 1.00;      // [ATR_SWING] Escalón extra B: SL a +X RR
+input double          InpTrailX_Step5_TrigRR        = 1.80;      // [ATR_SWING] Escalón extra C: activar a +X RR
+input double          InpTrailX_Step5_SL_RR         = 1.30;      // [ATR_SWING] Escalón extra C: SL a +X RR
+input double          InpTrailX_SwingStartRR        = 1.50;      // [ATR_SWING] Desde +X RR seguir swings fractales M5
+input double          InpTrailX_ATRStartRR          = 1.50;      // [ATR_SWING] Desde +X RR habilitar protección ATR
+input int             InpTrailX_ATRPeriod           = 14;        // [ATR_SWING] Período ATR (M5)
+input double          InpTrailX_ATRMult             = 2.0;       // [ATR_SWING] Multiplicador ATR (k x ATR)
+input bool            InpTrailX_ATROnlyWithoutSwing = true;      // [ATR_SWING] true = ATR solo si aún no hay swing sobre el piso
+input bool            InpTrailX_ATROnBarClose       = true;      // [ATR_SWING] true = evaluar ATR al cierre M5 (sin mechas tick)
+input int             InpSwingFractalBars           = 2;         // Velas a cada lado para swing fractal M5
+input int             InpSwingLookbackBars          = 40;        // Máximo de velas M5 para buscar swings
+input bool            InpEnableJudasCut             = false;     // Cortar en contra cerca de -0.50 RR (Judas)
+input double          InpJudasTriggerRR             = -0.50;     // Umbral RR negativo para corte Judas
+input double          InpTP_R_S1                    = 5.0;       // TP Setup 1 (múltiplo de R)
+input double          InpTP_R_S2C                   = 5.0;       // TP Setup 2 Continuación (múltiplo de R)
+input double          InpTP_R_S2N                   = 4.0;       // TP Setup 2 Nacimiento (múltiplo de R)
 
 input group "=== 7. TRAZA DE DIAGNÓSTICO ==="
 input bool   InpDebugTrace              = false;         // Escribir CSV de decisiones (Common\Files)
@@ -586,10 +600,26 @@ bool TienePosicionAbierta(ulong magic, ulong &outTicket, ulong &outPosId, double
 //+------------------------------------------------------------------+
 //| 6. CICLO DE VIDA DEL EXPERT ADVISOR                              |
 //+------------------------------------------------------------------+
+int      g_ATRHandle      = INVALID_HANDLE;
+datetime g_LastATRBarTime = 0;
+double   g_CachedATR      = 0.0;
+double   g_CachedClose1   = 0.0;
+
 int OnInit()
   {
    if(_Period != PERIOD_M5)
       Print("AVISO: La estrategia Nova está diseñada para temporalidad M5.");
+
+   g_ATRHandle      = INVALID_HANDLE;
+   g_LastATRBarTime = 0;
+   g_CachedATR      = 0.0;
+   g_CachedClose1   = 0.0;
+   if(InpTrailModeQe == TRAIL_ATR_SWING || InpTrailModeS2N == TRAIL_ATR_SWING)
+     {
+      g_ATRHandle = iATR(_Symbol, PERIOD_M5, MathMax(1, InpTrailX_ATRPeriod));
+      if(g_ATRHandle == INVALID_HANDLE)
+         Print("AVISO: no se pudo crear iATR; el respaldo ATR queda deshabilitado.");
+     }
 
    g_NYOffsetSec = CalcularOffsetNYSegundos(TimeCurrent());
 
@@ -602,13 +632,13 @@ int OnInit()
 
    TraceInit();
 
-   Print("NOVA v3.10 | ", _Symbol, " ", EnumToString(_Period),
+   Print("NOVA v3.13 | ", _Symbol, " ", EnumToString(_Period),
          " | autoDST=", (InpAutoDST ? "ON" : "OFF"),
          " | offsetNY=", (g_NYOffsetSec / 3600), "h",
-         " | obs7AM=", (InpObserveFrom7AM ? "ON" : "OFF"),
-         " | PB=", InpPullbackCandles, " direct2Qe=", (InpDirect2QeEntry ? "ON" : "OFF"),
-         " | S2C->invS1=", (InpS2C_InvalidatesS1 ? "ON" : "OFF"),
-         " | trail=", DoubleToString(InpTrail_Step3_TrigRR, 2), "->", DoubleToString(InpTrail_Step3_SL_RR, 2),
+         " | trailQe=", EnumToString(InpTrailModeQe),
+         " | trailS2N=", EnumToString(InpTrailModeS2N),
+         " | atrFallback=", (InpTrailX_ATROnlyWithoutSwing ? "ON" : "OFF"),
+         " | atrBarClose=", (InpTrailX_ATROnBarClose ? "ON" : "OFF"),
          " | riesgo=", DoubleToString(InpRiskPercent, 2), "%");
 
    if(InpUseNewsFilter)
@@ -624,6 +654,11 @@ int OnInit()
 
 void OnDeinit(const int reason)
   {
+   if(g_ATRHandle != INVALID_HANDLE)
+     {
+      IndicatorRelease(g_ATRHandle);
+      g_ATRHandle = INVALID_HANDLE;
+     }
    TraceClose();
    ObjectsDeleteAll(0, "NOVA_");
    Comment("");
@@ -2268,22 +2303,45 @@ bool GestionarPosicionComun(ulong ticket, ulong magic, string setupName, datetim
         }
      }
 
-   // 5. Trailing progresivo (+0.50->-0.25, +0.80->+0.50, +1.80->+1.15, >=+2.00 swings fractales reales)
+   // 5. Trailing progresivo desacoplado por motor (Qe vs S2 Nacimiento)
    if(InpExit_Trailing && bullfyOk)
-      AplicarTrailingProgresivo(ticket, posType, setupName, openPrice, curSL, curTP, initRisk, maxRRReached);
+     {
+      ENUM_TRAIL_MODE mode = (setupName == "S2N") ? InpTrailModeS2N : InpTrailModeQe;
+      AplicarTrailingProgresivo(ticket, posType, setupName, mode, openPrice, curSL, curTP, initRisk, maxRRReached);
+     }
 
    return false;
   }
 
-void AplicarTrailingProgresivo(ulong ticket, long posType, string setupName,
+bool ObtenerATRYCierreM5(double &atrOut, double &close1Out)
+  {
+   if(g_ATRHandle == INVALID_HANDLE) return false;
+   datetime curBar = iTime(_Symbol, PERIOD_M5, 0);
+   if(curBar != g_LastATRBarTime || g_CachedATR <= 0.0)
+     {
+      double atrBuf[];
+      ArraySetAsSeries(atrBuf, true);
+      if(CopyBuffer(g_ATRHandle, 0, 1, 1, atrBuf) != 1 || atrBuf[0] <= 0.0)
+         return false;
+      g_CachedATR      = atrBuf[0];
+      g_CachedClose1   = iClose(_Symbol, PERIOD_M5, 1);
+      g_LastATRBarTime = curBar;
+     }
+   atrOut    = g_CachedATR;
+   close1Out = g_CachedClose1;
+   return (atrOut > 0.0 && close1Out > 0.0);
+  }
+
+void AplicarTrailingProgresivo(ulong ticket, long posType, string setupName, ENUM_TRAIL_MODE trailMode,
                                double openPrice, double curSL, double curTP, double initRisk, double maxRRReached)
   {
-   int dir = (posType == POSITION_TYPE_BUY) ? 1 : -1;
+   int dir        = (posType == POSITION_TYPE_BUY) ? 1 : -1;
    double floorSL = 0.0;
    string reason  = "";
    bool usarSwing = false;
+   bool usarATR   = false;
 
-   if(InpTrailMode == TRAIL_NOVA_SWING)
+   if(trailMode == TRAIL_NOVA_SWING)
      {
       if(maxRRReached >= InpTrail_Step3_TrigRR)
         {
@@ -2304,6 +2362,19 @@ void AplicarTrailingProgresivo(ulong ticket, long posType, string setupName,
       if(maxRRReached >= InpTrail_SwingStartRR)
          usarSwing = true;
      }
+   else if(trailMode == TRAIL_ATR_SWING)
+     {
+      if(maxRRReached >= InpTrailX_Step5_TrigRR)      { floorSL = openPrice + dir * initRisk * InpTrailX_Step5_SL_RR; reason = setupName + "_X1.80"; }
+      else if(maxRRReached >= InpTrailX_Step4_TrigRR) { floorSL = openPrice + dir * initRisk * InpTrailX_Step4_SL_RR; reason = setupName + "_X1.50"; }
+      else if(maxRRReached >= InpTrailX_Step3_TrigRR) { floorSL = openPrice + dir * initRisk * InpTrailX_Step3_SL_RR; reason = setupName + "_X1.20"; }
+      else if(maxRRReached >= InpTrail_Step2_TrigRR)  { floorSL = openPrice + dir * initRisk * InpTrail_Step2_SL_RR;  reason = setupName + "_RR0.80"; }
+      else if(maxRRReached >= InpTrail_Step1_TrigRR)  { floorSL = openPrice + dir * initRisk * InpTrail_Step1_SL_RR;  reason = setupName + "_RR0.50"; }
+
+      if(maxRRReached >= InpTrailX_SwingStartRR)
+         usarSwing = true;
+      if(maxRRReached >= InpTrailX_ATRStartRR && g_ATRHandle != INVALID_HANDLE)
+         usarATR = true;
+     }
    else // TRAIL_OPTIMIZED
      {
       if(maxRRReached >= 1.50)      { floorSL = openPrice + dir * initRisk * 1.00; reason = setupName + "_OPT1.50"; }
@@ -2314,17 +2385,52 @@ void AplicarTrailingProgresivo(ulong ticket, long posType, string setupName,
          usarSwing = true;
      }
 
-   double targetSL = floorSL;
+   double stepFloorSL       = floorSL;
+   double targetSL          = stepFloorSL;
+   bool   haySwingSobrePiso = false;
+
    if(usarSwing)
      {
       double swingSL = ObtenerSwingEstructuralM5(posType, InpSwingFractalBars, InpSwingLookbackBars);
       if(swingSL > 0.0)
         {
-         if(targetSL == 0.0)
-            targetSL = swingSL;
+         if(stepFloorSL == 0.0)
+           {
+            haySwingSobrePiso = (posType == POSITION_TYPE_BUY) ? (swingSL > openPrice) : (swingSL < openPrice);
+            targetSL          = swingSL;
+            reason            = setupName + "_SWING";
+           }
          else
-            targetSL = (posType == POSITION_TYPE_BUY) ? MathMax(floorSL, swingSL) : MathMin(floorSL, swingSL);
-         reason = setupName + "_SWING";
+           {
+            haySwingSobrePiso = (posType == POSITION_TYPE_BUY) ? (swingSL > stepFloorSL) : (swingSL < stepFloorSL);
+            if(haySwingSobrePiso)
+              {
+               targetSL = swingSL;
+               reason   = setupName + "_SWING";
+              }
+           }
+        }
+     }
+
+   // Respaldo ATR: si InpTrailX_ATROnlyWithoutSwing = true, solo actúa cuando aún NO hay swing fractal sobre el piso
+   if(usarATR && (!InpTrailX_ATROnlyWithoutSwing || !haySwingSobrePiso))
+     {
+      double atrVal = 0.0, close1Val = 0.0;
+      if(ObtenerATRYCierreM5(atrVal, close1Val))
+        {
+         double refPx = InpTrailX_ATROnBarClose ? close1Val :
+                        ((posType == POSITION_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK));
+         if(refPx > 0.0)
+           {
+            double atrSL = NormalizeDouble(refPx - dir * InpTrailX_ATRMult * atrVal, _Digits);
+            bool mejora  = (targetSL == 0.0) ||
+                           ((posType == POSITION_TYPE_BUY) ? (atrSL > targetSL) : (atrSL < targetSL));
+            if(mejora)
+              {
+               targetSL = atrSL;
+               reason   = setupName + "_ATR";
+              }
+           }
         }
      }
 
@@ -2898,7 +3004,7 @@ void ActualizarHUD(datetime nyTime, string estado, color clrEstado)
                       DoubleToString(g_RangeHigh, _Digits) + " - " + DoubleToString(g_RangeLow, _Digits) + " (" + DoubleToString(g_RangePct, 2) + "%)" :
                       "Calculando...";
 
-   SetHudLine(0, x + 12, y + 10,  "NOVA BOT v3.10  |  NAS100 M5  |  NY Offset +" + IntegerToString(g_NYOffsetSec / 3600) + "h", clrGold, 9, true);
+   SetHudLine(0, x + 12, y + 10,  "NOVA BOT v3.13  |  NAS100 M5  |  NY Offset +" + IntegerToString(g_NYOffsetSec / 3600) + "h", clrGold, 9, true);
    SetHudLine(1, x + 12, y + 32,  "NY: " + TimeToString(nyTime, TIME_DATE|TIME_MINUTES) + " | " + TruncarTexto(estado, 36), clrEstado, 8, false);
    SetHudLine(2, x + 12, y + 50,  "Rango 02-07:  " + rangoTxt, clrWhite, 8, false);
    SetHudLine(3, x + 12, y + 68,  "Riesgo / Op:  " + DoubleToString(InpRiskPercent, 2) + "% ($" + DoubleToString(riesgoUSD, 2) + ")", clrSilver, 8, false);

@@ -64,7 +64,7 @@
 
 ## 4. Estadísticas de Operaciones y Rachas
 
-* **Total de operaciones ejecutadas:** 1,010ahora este
+* **Total de operaciones ejecutadas:** 1,010
 
 * **Total de transacciones:** 2,020
 
