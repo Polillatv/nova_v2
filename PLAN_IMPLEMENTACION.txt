@@ -580,7 +580,7 @@ Nota importante : En el equipo donde se realizo la auditoria y modificacion
 7.1. INVENTARIO EXACTO DE ARCHIVOS CREADOS Y MODIFICADOS
 --------------------------------------------------------------------------------
 A) ARCHIVOS CREADOS:
-1. Nova_Bot_v3.mq5 (2,732 lineas | #property version "3.00")
+1. Nova_Bot_v3.mq5 (2,733 lineas | #property version "3.00")
    - Nuevo EA unificado de produccion basado en la estructura de
      Nova_Bot_v2_1_Clone.mq5 (v2.3) + los flags de ablacion de v3.11 + todas
      las correcciones de las Fases 1 a 5.
@@ -743,8 +743,8 @@ C) ARCHIVOS CONSERVADOS SIN CAMBIOS COMO LINEA BASE / REFERENCIA:
 Se verifico mediante script tras la ultima edicion:
 - `Nova_Bot_v2.mq5` : 1,425 lineas | llaves 148/148 | parentesis 612/612 |
   corchetes 11/11 | 44 inputs | 0 duplicados.
-- `Nova_Bot_v3.mq5` : 2,732 lineas | llaves 309/309 | parentesis 1177/1177 |
-  corchetes 33/33 | 86 inputs | 0 duplicados en inputs, globales ni funciones.
+- `Nova_Bot_v3.mq5` : 2,733 lineas | llaves 309/309 | parentesis 1177/1177 |
+  corchetes 33/33 | 87 inputs | 0 duplicados en inputs, globales ni funciones.
 - Marcadores `[cite:` restantes en archivos `.md`: 0.
 
 --------------------------------------------------------------------------------

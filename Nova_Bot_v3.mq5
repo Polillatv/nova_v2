@@ -92,6 +92,7 @@ input bool   InpS2C_RequireS2NStructure = false;         // Exigir CH previo ant
 input double InpCont_SL_AgresPct        = 0.50;          // Distancia > X% para SL Agresivo
 input double InpCont_SL_ModMinPct       = 0.30;          // Distancia >= X% para SL Moderado
 input double InpS3_MinOutPct            = 0.05;          // Salida mínima del rango (%) para contar Setup 3
+input bool   InpS3_RequireBodyBreak     = false;         // Exigir cierre con cuerpo fuera del rango en Setup 3
 input bool   InpS3_RequireMidCross      = true;          // Exigir cruce de 50% al retomar dirección contraria
 
 input group "=== 5. UMBRALES SETUP 2 NACIMIENTO ==="
