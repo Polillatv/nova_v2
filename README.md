@@ -10,6 +10,7 @@ Expert Advisor (EA) en **MQL5** para **MetaTrader 5** que automatiza la **Estrat
 Bot Nova/
 ├── Nova_Bot_v3.mq5                  # EA estable (v3.10, trailing original)
 ├── Nova_Bot_v3_1.mq5                # EA v3.11: trailing ATR + swing (ver CHANGELOG)
+├── Nova_Bot_v3_2.mq5                # EA v3.12: variante con ATR x3 y swing/ATR desde 2.0R (a validar)
 ├── Nova_Bot_v3.ex5                  # Ejecutable compilado local para MT5 (ignorado en Git)
 ├── README.md                        # Guía general del proyecto
 ├── .gitignore                       # Exclusión de binarios (.ex5), logs y trazas CSV
@@ -62,9 +63,12 @@ Bot Nova/
 | Archivo | Versión | Trailing | Magics |
 |---|---|---|---|
 | `Nova_Bot_v3.mq5` | 3.10 | Escalones 0.50/0.80/1.80R + swing M5 desde 2.0R | 2026xx |
-| `Nova_Bot_v3_1.mq5` | 3.11 | Modo `TRAIL_ATR_SWING`: escalones extra 1.20/1.50/1.80R, swing desde 1.5R, piso ATR(M5) | 2036xx |
+| `Nova_Bot_v3_1.mq5` | 3.11 | Modo `TRAIL_ATR_SWING`: escalones extra 1.20/1.50/1.80R, swing desde 1.5R, piso ATR(M5) x2.0 desde 1.5R | 2036xx |
+| `Nova_Bot_v3_2.mq5` | 3.12 | Igual que 3.11 pero swing y piso ATR(M5) x3.0 desde 2.0R | 2046xx |
 
-Ambas versiones usan magics y claves GlobalVariable distintas, así que pueden convivir en el mismo terminal. Detalle en [CHANGELOG](docs/historial_cambios/CHANGELOG.md).
+Resultados 2023-2026 (todos los setups): v3.10 +30.67% PF 1.27 | v3.11 +27.70% PF 1.24 | v3.12 pendiente. Ver [comparativa](backtests/COMPARATIVA_v3_vs_v3_1.md).
+
+Las versiones usan magics y claves GlobalVariable distintas, así que pueden convivir en el mismo terminal. Detalle en [CHANGELOG](docs/historial_cambios/CHANGELOG.md).
 
 ---
 

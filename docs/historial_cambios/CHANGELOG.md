@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## v3.12 - Nova_Bot_v3_2.mq5
+Variante de v3.11 tras el backtest (v3.11: +27.70% PF 1.24 vs v3.10: +30.67% PF 1.27; el trailing cortaba trades ganadores):
+- `InpTrailX_ATRMult` 2.0 -> **3.0**, `InpTrailX_ATRStartRR` 1.5 -> **2.0**, `InpTrailX_SwingStartRR` 1.5 -> **2.0**.
+- Escalones 1.20/1.50/1.80R se mantienen.
+- Magics 2046xx, claves `NOVA32_`, trace `Nova_v3_2_trace_*.csv`.
+- Pendiente: backtest 2023-2026 y comparar con v3.10 / v3.11.
+
 ## v3.11 - Nova_Bot_v3_1.mq5
 Mejora de trailing (el v3.10 deja el SL muy atras en impulsos verticales):
 - Nuevo modo `TRAIL_ATR_SWING` (default en este archivo). Los modos `NOVA_SWING` y `OPTIMIZED` siguen disponibles.
