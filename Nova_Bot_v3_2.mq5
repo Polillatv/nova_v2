@@ -128,10 +128,10 @@ input double          InpTrailX_Step4_TrigRR = 1.50;     // [ATR_SWING] Escalon 
 input double          InpTrailX_Step4_SL_RR  = 1.00;     // [ATR_SWING] Escalon extra B: SL a +X RR
 input double          InpTrailX_Step5_TrigRR = 1.80;     // [ATR_SWING] Escalon extra C: activar a +X RR
 input double          InpTrailX_Step5_SL_RR  = 1.30;     // [ATR_SWING] Escalon extra C: SL a +X RR
-input double          ${1}2.00;     // [ATR_SWING] Desde +X RR seguir swings M5 (reemplaza SwingStartRR)
-input double          ${1}2.00;     // [ATR_SWING] Desde +X RR activar piso ATR
+input double          InpTrailX_SwingStartRR = 2.00;     // [ATR_SWING] Desde +X RR seguir swings M5 (reemplaza SwingStartRR)
+input double          InpTrailX_ATRStartRR   = 2.00;     // [ATR_SWING] Desde +X RR activar piso ATR
 input int             InpTrailX_ATRPeriod    = 14;       // [ATR_SWING] Periodo ATR (M5)
-input double          ${1}3.0;      // [ATR_SWING] SL = precio -/+ k x ATR (el mas cercano al precio entre ATR y swing)
+input double          InpTrailX_ATRMult      = 3.0;      // [ATR_SWING] SL = precio -/+ k x ATR (el mas cercano al precio entre ATR y swing)
 input int             InpSwingFractalBars   = 2;         // Velas a cada lado para swing fractal M5
 input int             InpSwingLookbackBars  = 40;        // Máximo de velas M5 para buscar swings
 input bool            InpEnableJudasCut     = false;     // Cortar en contra cerca de -0.50 RR (Judas)
