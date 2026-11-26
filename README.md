@@ -22,26 +22,27 @@ Bot Nova/
 │   │   ├── setup_2_continuacion/    # Reglas de Setup 2 Continuación + láminas + capturas TV
 │   │   └── setup_3_no_operable/     # Filtro de exclusión Setup 3 (barrido bilateral + giro)
 │   └── historial_cambios/
-│       ├── CHANGELOG.md             # Historial resumido de versiones (v3.10 -> v3.13)
+│       ├── CHANGELOG.md             # Historial de versiones (v3.10 -> v3.13)
 │       └── PLAN_IMPLEMENTACION.txt  # Bitácora técnica de auditoría y evolución
 │
-├── backtests/                       # Registros, optimizaciones y comparativas
-│   ├── COMPARATIVA_v3_vs_v3_1.md    # Comparativa cuantitativa v3.10 vs v3.11 vs v3.12
+├── backtests/                       # Registros, optimizaciones y comparativas (nomenclatura unificada)
+│   ├── COMPARATIVA_FAMILIA_v3.md    # Comparativa maestra v3.10 vs v3.11 vs v3.12 vs v3.13
 │   ├── manual_2023_h1/              # Backtesting manual Forex Tester (Ene - Jun 2023)
-│   ├── mt5_v1_historico/            # Corridas históricas iniciales (v1)
-│   ├── mt5_v3_historico/            # Backtest 99% y optimización v3.10 (2023 - 2026)
-│   ├── mt5_v3_1_historico/          # Backtest 99% y optimización v3.11 (2023 - 2026)
-│   └── mt5_v3_2_historico/          # Backtest 99% y optimización v3.12 (2023 - 2026)
+│   ├── mt5_v1_ablacion/             # Corridas iniciales de ablación en MT5
+│   ├── mt5_v3_10/                   # Backtest 99% y optimización v3.10 (NOVA_SWING global)
+│   ├── mt5_v3_11/                   # Backtest 99% y optimización v3.11 (ATR x2 tick global)
+│   ├── mt5_v3_12/                   # Backtest 99% y optimización v3.12 (ATR x3 @ 2.0R global)
+│   └── mt5_v3_13/                   # Backtest 99% y optimización v3.13 (Híbrido productivo actual)
 │
 └── archive/                         # Versiones anteriores (.mq5) conservadas como respaldo
-    ├── Nova_Bot_v1.mq5
-    ├── Nova_Bot_v2.mq5
-    ├── Nova_Bot_v2_3_Clone.mq5
-    ├── Nova_Bot_v3_1.mq5            # Experimento v3.11 (ATR x2 global)
-    └── Nova_Bot_v3_2.mq5            # Experimento v3.12 (ATR x3 global desde 2.0R)
+    ├── Nova_Bot_v1_ablacion.mq5
+    ├── Nova_Bot_v2_0.mq5
+    ├── Nova_Bot_v2_3.mq5
+    ├── Nova_Bot_v3_11.mq5
+    └── Nova_Bot_v3_12.mq5
 ```
 
-> **Nota para MetaTrader 5:** En la raíz solo se compila `Nova_Bot_v3.ex5` (`v3.13`), mientras que las variantes experimentales (`v3_1`, `v3_2`) quedan resguardadas en `archive/` sin `.ex5` para mantener limpio el Navegador y el Probador de Estrategias.
+> **Convención única de versiones:** Todo el repositorio utiliza la numeración exacta del `#property version` del código (`v3.10`, `v3.11`, `v3.12` y **`v3.13`**) tanto en carpetas (`mt5_v3_10` ... `mt5_v3_13`) como en `archive/` y reportes, evitando mezclar `v3.2`/`v3.3` con `v3.12`/`v3.13`.
 
 ---
 
@@ -56,26 +57,22 @@ Bot Nova/
   - **[Setup 2 Continuación](docs/setups/setup_2_continuacion/setup2_continuacion.md):** Tras barrido inicial, quiebre opuesto `2QR >= 0.15%` con cuerpo + `1Qe` + orden Stop directa sobre `2Qe`. **Al activarse `S2C`, invalida automáticamente `Setup 1`**.
   - **[Setup 3 No Operable](docs/setups/setup_3_no_operable/setup3_no_operable.md):** Bloquea nuevas entradas del día si el precio rompe con cuerpo por ambos extremos del rango y retoma dirección contraria cruzando el `50%`.
 - **Trailing Híbrido Desacoplado por Motor (`v3.13`):**
-  - **Motor `Qe` (`Setup 1` y `Setup 2 Continuación` -> `InpTrailModeQe = TRAIL_ATR_SWING`):**
-    - Escalones: `+0.50R -> -0.25R`, `+0.80R -> +0.50R`, `+1.20R -> +0.70R`, `+1.50R -> +1.00R`, `+1.80R -> +1.30R`.
-    - Desde `+1.50R` sigue **swings fractales reales M5** hasta el TP (`5R`).
-    - **Respaldo ATR inteligente (`InpTrailX_ATROnlyWithoutSwing = true`, `InpTrailX_ATROnBarClose = true`):** Evalúa `ATR(14)` al cierre de vela M5 **únicamente cuando aún no se formó un swing fractal por encima del piso**, protegiendo espigas verticales en V sin cortar prematuramente los recorridos tendenciales hacia `5R`.
-  - **Motor `Setup 2 Nacimiento` (`InpTrailModeS2N = TRAIL_NOVA_SWING`):**
-    - Escalones amplios (`+0.50R -> -0.25R`, `+0.80R -> +0.50R`, `+1.80R -> +1.15R`) + swings fractales desde `+2.00R` hasta el TP (`4R`), dando aire al retesteo natural del borde `100% FINAL` del rango.
-- **Protección Prop Firm (Bullfy Ltd.):** Ventana restringida en noticias de carpeta roja (`[T-5m, T+5m]` respetando antigüedad mínima de cierre), salida preventiva `90 min` antes de **FOMC** y guardia diaria de Drawdown.
+  - **Motor `Qe` (`Setup 1` y `Setup 2 Continuación` -> `InpTrailModeQe = TRAIL_ATR_SWING`):** Escalones `0.50 -> -0.25R`, `0.80 -> +0.50R`, `1.20 -> +0.70R`, `1.50 -> +1.00R`, `1.80 -> +1.30R` + swings fractales M5 desde `+1.50R` + respaldo `ATR(14)` al cierre M5 solo mientras no exista swing fractal sobre el piso.
+  - **Motor `Setup 2 Nacimiento` (`InpTrailModeS2N = TRAIL_NOVA_SWING`):** Escalones amplios `0.50 -> -0.25R`, `0.80 -> +0.50R`, `1.80 -> +1.15R` + swings fractales desde `+2.00R` hasta el TP (`4R`).
+- **Protección Prop Firm (Bullfy Ltd.):** Ventana restringida en noticias rojas (`[T-5m, T+5m]`), salida preventiva `90 min` antes de **FOMC** y guardia diaria de Drawdown.
 
 ---
 
-## Evolución de Versiones (Backtest `NAS100 M5` `2023–2026`, `99%` Ticks)
+## Resumen de Rendimiento (`NAS100 M5` `2023.01 – 2026.10`, `99%` Ticks)
 
-| Versión | Archivo | Estrategia de Trailing | Todos Activos | `S1 + S2C` (Pass 5) | `Solo S2N` (Pass 2) |
-| :--- | :--- | :--- | :---: | :---: | :---: |
-| **v3.10** | `Nova_Bot_v3.mq5` *(prev)* | `NOVA_SWING` global | **`+30.67%` \| PF `1.27`** | `+$22,283` \| DD `7.93%` | **`+$4,912` \| PF `1.18`** |
-| **v3.11** | `archive/Nova_Bot_v3_1.mq5` | `ATR_SWING` (`x2`, tick) global | `+27.70%` \| PF `1.24` | **`+$24,404` \| DD `6.69%`** | `+$1,479` \| PF `1.05` |
-| **v3.12** | `archive/Nova_Bot_v3_2.mq5` | `ATR_SWING` (`x3` @ `2.0R`) global | `+26.49%` \| PF `1.23` | `+$21,956` \| DD `6.89%` | `+$2,346` \| PF `1.09` |
-| **v3.13** | **`Nova_Bot_v3.mq5`** *(actual)* | **Híbrido (`Qe`: `ATR_SWING` fallback cierre M5 + `S2N`: `NOVA_SWING`)** | *Listo para validar* | *Combina Pass 5 v3.11* | *Combina Pass 2 v3.10* |
+| Versión | Carpeta Reportes | Retorno Neto | Equity DD Máx. | Sharpe | Recovery | Mejor Trade | Pass 7 (Optimizador) |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **v3.10** | [`backtests/mt5_v3_10/`](backtests/mt5_v3_10/reporte_maestro_v3_10.md) | **`+30.67%`** | `7.90%` | `3.64` | `3.06` | **`+$2,444`** | `+$28,000` (`DD 8.09%`) |
+| **v3.11** | [`backtests/mt5_v3_11/`](backtests/mt5_v3_11/reporte_maestro_v3_11.md) | `+27.70%` | `8.06%` | `3.92` | `2.73` | `+$1,528` | `+$26,326` (`DD 7.83%`) |
+| **v3.12** | [`backtests/mt5_v3_12/`](backtests/mt5_v3_12/reporte_maestro_v3_12.md) | `+26.49%` | `7.72%` | `3.59` | `2.72` | `+$1,542` | `+$24,891` (`DD 7.66%`) |
+| **v3.13 (Actual)** | [`backtests/mt5_v3_13/`](backtests/mt5_v3_13/reporte_maestro_v3_13.md) | **`+30.20%`** | **`7.18%`** | **`4.01`** | **`3.29`** | **`+$2,444`** | **`+$28,549` (`DD 7.03%`)** |
 
-Detalle completo en [CHANGELOG.md](docs/historial_cambios/CHANGELOG.md) y [COMPARATIVA_v3_vs_v3_1.md](backtests/COMPARATIVA_v3_vs_v3_1.md).
+Detalle completo en [COMPARATIVA_FAMILIA_v3.md](backtests/COMPARATIVA_FAMILIA_v3.md) y [CHANGELOG.md](docs/historial_cambios/CHANGELOG.md).
 
 ---
 
@@ -88,8 +85,7 @@ Detalle completo en [CHANGELOG.md](docs/historial_cambios/CHANGELOG.md) y [COMPA
    ```
 3. **Probador de Estrategias (Backtesting):**
    - Activo `NAS100`, temporalidad `M5`, modelado *Cada tick basado en ticks reales*.
-   - En **Parámetros de entrada (Inputs)** hacer **Clic derecho -> Restablecer (Reset)** para cargar los valores por defecto de **`v3.13`** (el HUD mostrará `"NOVA BOT v3.13"`).
-   - Para auditar decisiones vela por vela, activar `InpDebugTrace = true` (`Terminal\Common\Files\Nova_v3_trace_*.csv`).
+   - En **Parámetros de entrada (Inputs)** hacer **Clic derecho -> Restablecer (Reset)** para cargar los valores por defecto de **`v3.13`** (`"NOVA BOT v3.13"` en el HUD).
 
 ---
 

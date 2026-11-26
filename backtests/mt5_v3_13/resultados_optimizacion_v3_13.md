@@ -1,9 +1,9 @@
-# Resultados de Optimización - Nova_Bot_v3.3 (`Nova_Bot_v3`)
+# Resultados de Optimización - Nova_Bot v3.13 (`Nova_Bot_v3.mq5`)
 
 ## Metadatos de la Prueba (Strategy Tester)
 
 * **Plataforma / Servidor:** MetaTrader 5 (Pepperstone-Demo)
-* **Asesor Experto (EA):** `Nova_Bot_v3` (Iteración v3.3)
+* **Asesor Experto (EA):** `Nova_Bot_v3` (`v3.13`)
 * **Símbolo / Temporalidad:** `NAS100`, `M5`
 * **Criterio de Ordenamiento:** Resultado (Profit Factor / Rentabilidad máxima descendiente)
 

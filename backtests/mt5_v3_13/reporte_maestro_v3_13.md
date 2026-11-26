@@ -1,30 +1,30 @@
-# Reporte Maestro de Rendimiento - Nova_Bot_v3.3 (`Nova_Bot_v3`)
+# Reporte Maestro de Rendimiento - Nova_Bot v3.13 (`Nova_Bot_v3.mq5`)
 
-## 1. Resumen Ejecutivo y Comparativa Evolutiva (`v3` vs. `v3.11` vs. `v3.2` vs. `v3.3`)
+## 1. Resumen Ejecutivo y Comparativa Evolutiva (`v3.10` vs. `v3.11` vs. `v3.12` vs. `v3.13`)
 
 Comparación directa de las cuatro iteraciones de la generación **v3** bajo las mismas condiciones de simulación (`NAS100 M5`, calidad `99%`, `185,005,859` ticks, depósito inicial `100,000.00` USD):
 
-| Métrica Clave | Nova_Bot_v3 | Nova_Bot_v3.11 | Nova_Bot_v3.2 | Nova_Bot_v3.3 (Actual) | Ganador / Lectura |
+| Métrica Clave | `v3.10` | `v3.11` | `v3.12` | **`v3.13` (Actual)** | Ganador / Lectura |
 | :--- | :---: | :---: | :---: | :---: | :--- |
 | **Beneficio Neto** | **+$30,671.66** | +$27,704.44 | +$26,488.50 | **+$30,198.83 (+30.20%)** | Prácticamente empate en cima (+$30k) |
-| **Equity Drawdown Máx.** | 7.90% ($10,020) | 8.06% ($10,165) | 7.72% ($9,730) | **7.18% ($9,179.52)** | **`v3.3` récord menor DD** |
-| **Balance Drawdown Máx.** | 7.50% ($9,490) | 7.66% ($9,635) | 7.32% ($9,200) | **6.78% ($8,644.62)** | **`v3.3` récord menor DD** |
-| **Ratio de Sharpe** | 3.64 | 3.92 | 3.59 | **4.01** | **`v3.3` rompe barrera de 4.0** |
-| **Factor de Recuperación** | 3.06 | 2.73 | 2.72 | **3.29** | **`v3.3` récord resiliencia** |
+| **Equity Drawdown Máx.** | 7.90% ($10,020) | 8.06% ($10,165) | 7.72% ($9,730) | **7.18% ($9,179.52)** | **`v3.13` récord menor DD** |
+| **Balance Drawdown Máx.** | 7.50% ($9,490) | 7.66% ($9,635) | 7.32% ($9,200) | **6.78% ($8,644.62)** | **`v3.13` récord menor DD** |
+| **Ratio de Sharpe** | 3.64 | 3.92 | 3.59 | **4.01** | **`v3.13` rompe barrera de 4.0** |
+| **Factor de Recuperación** | 3.06 | 2.73 | 2.72 | **3.29** | **`v3.13` récord resiliencia** |
 | **Profit Factor** | **1.27** | 1.24 | 1.23 | **1.26** | Virtualmente igual al máximo |
-| **LR Correlation** | 0.90 | 0.90 | 0.90 | **0.92** | **`v3.3` mayor linealidad** |
-| **LR Standard Error** | 3,445.82 | 3,247.90 | 3,209.01 | **3,184.17** | **`v3.3` menor dispersión** |
+| **LR Correlation** | 0.90 | 0.90 | 0.90 | **0.92** | **`v3.13` mayor linealidad** |
+| **LR Standard Error** | 3,445.82 | 3,247.90 | 3,209.01 | **3,184.17** | **`v3.13` menor dispersión** |
 | **Total Operaciones** | 1,010 | 1,015 | 1,013 | **1,013** | Muestra altamente consistente |
 | **Expected Payoff** | **$30.37** | $27.30 | $26.15 | **$29.81** | Excelente retorno medio/trade |
 | **Solo S2 Nacimiento (Pass 2)** | **+$4,911.93 (1.18)** | +$1,478.72 (1.05) | +$2,345.65 (1.09) | **+$4,911.93 (PF 1.18)** | **Recupera 100% fuerza S2N** |
 | **Solo S2 Cont (Pass 4)** | +$7,931.37 (1.49) | **+$8,980.69 (1.55)** | +$8,004.96 (1.49) | **+$8,243.94 (PF 1.51)** | **PF 1.51 con solo 3.27% DD** |
 
-### Diagnóstico Clave de `v3.3` (La Versión Más Equilibrada)
+### Diagnóstico Clave de `v3.13` (La Versión Más Equilibrada)
 
-* **Combina el techo de rentabilidad de `v3` con la estabilidad máxima:** Mantiene intacto el bloque de **+$30,198.83** de beneficio neto (`PF 1.26`) al recuperar la potencia total de `Setup 2 Nacimiento` (`+$4,911.93`, `PF 1.18`), pero recortando el **Equity Drawdown máximo de `7.90%` a `7.18%`** (`-$840` menos de caída máxima).
+* **Combina el techo de rentabilidad de `v3.10` con la estabilidad máxima:** Mantiene intacto el bloque de **+$30,198.83** de beneficio neto (`PF 1.26`) al recuperar la potencia total de `Setup 2 Nacimiento` (`+$4,911.93`, `PF 1.18`), pero recortando el **Equity Drawdown máximo de `7.90%` a `7.18%`** (`-$840` menos de caída máxima).
 * **Mejora en todos los indicadores institucionales de riesgo:** Supera a todas las versiones previas en **Ratio de Sharpe (`4.01`)**, **Factor de Recuperación (`3.29`)**, **LR Correlation (`0.92`)** y **LR Standard Error (`3,184.17`)**.
 
-## 2. Desglose por Combinación de Setups (Optimización v3.3)
+## 2. Desglose por Combinación de Setups (Optimización `v3.13`)
 
 | Paso (Pass) | Combinación Activa | Resultado (PF) | Beneficio Neto | Operaciones | Beneficio Esperado | Reducción % (DD) |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |

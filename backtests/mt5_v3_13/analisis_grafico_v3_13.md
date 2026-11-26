@@ -1,9 +1,9 @@
-# Análisis de la Curva de Balance y Patrimonio - Nova_Bot_v3.3 (`Nova_Bot_v3`)
+# Análisis de la Curva de Balance y Patrimonio - Nova_Bot v3.13 (`Nova_Bot_v3.mq5`)
 
 ## 1. Metadatos del Gráfico (Strategy Tester - Graph)
 
 * **Plataforma / Servidor:** MetaTrader 5 (Pepperstone-Demo)
-* **Asesor Experto (EA):** `Nova_Bot_v3` (Iteración v3.3)
+* **Asesor Experto (EA):** `Nova_Bot_v3` (`v3.13`)
 * **Símbolo / Temporalidad:** `NAS100`, `M5`
 * **Periodo Evaluado (Eje X):** `2023.01.17` hasta `2026.08.17` (~3 años y 8 meses)
 * **Rango Vertical Balance / Patrimonio (Eje Y):** `96,512` a `133,184` USD (Capital inicial: `100,000.00` USD)

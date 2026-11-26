@@ -1,6 +1,6 @@
-# Reporte Maestro de Rendimiento - Nova_Bot_v3.2 (`Nova_Bot_v3_2`)
+# Reporte Maestro de Rendimiento - Nova_Bot v3.12 (`archive/Nova_Bot_v3_12.mq5`)
 
-## 1. Resumen Ejecutivo y Comparativa Evolutiva (`v3` vs. `v3.11` vs. `v3.2`)
+## 1. Resumen Ejecutivo y Comparativa Evolutiva (`v3.10` vs. `v3.11` vs. `v3.12`)
 
 Comparación directa de las tres iteraciones de la generación **v3** bajo exactamente las mismas condiciones de simulación (`NAS100 M5`, calidad `99%`, `185,005,859` ticks, depósito inicial `100,000.00` USD):
 

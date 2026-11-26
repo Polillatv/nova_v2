@@ -1,9 +1,9 @@
-# Reporte Estadístico de Backtest - Nova_Bot_v3.3 (`Nova_Bot_v3`)
+# Reporte Estadístico de Backtest - Nova_Bot v3.13 (`Nova_Bot_v3.mq5`)
 
 ## 1. Metadatos del Entorno y Datos Históricos
 
 * **Plataforma / Servidor:** MetaTrader 5 (Pepperstone-Demo)
-* **Asesor Experto (EA):** `Nova_Bot_v3` (Iteración v3.3)
+* **Asesor Experto (EA):** `Nova_Bot_v3` (`v3.13`)
 * **Símbolo / Temporalidad:** `NAS100`, `M5`
 * **Calidad del historial:** 99%
 * **Barras:** 275,862

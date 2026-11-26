@@ -1,6 +1,6 @@
-# Reporte Maestro de Rendimiento - Nova_Bot_v3
+# Reporte Maestro de Rendimiento - Nova_Bot v3.10 (`Nova_Bot_v3` Base)
 
-## 1. Resumen Ejecutivo y Evolución (v2.3 vs. v3)
+## 1. Resumen Ejecutivo y Evolución (`v2.3` vs. `v3.10`)
 
 La actualización hacia **Nova_Bot_v3** representa un salto cualitativo y cuantitativo significativo respecto a la versión anterior (`v2.3`) en el periodo completo de casi 4 años (`2023.01.11` – `2026.10.12` en `NAS100 M5`):
 
