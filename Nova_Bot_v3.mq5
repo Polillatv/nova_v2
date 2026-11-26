@@ -1,11 +1,11 @@
 //+------------------------------------------------------------------+
 //|                                                  Nova_Bot_v3.mq5 |
-//|           Estrategia Nova - Edición Unificada Producción v3.00   |
-//|   Cumplimiento Bullfy Ltd. + DST Auto + Setup 1 / 2N / 2C / S3   |
-//|   Recuperación de Estado + Asia Fix + Swings Fractales + Traza   |
+//|           Estrategia Nova - Edición Unificada Producción v3.10   |
+//|   Calibración Fiel Backtest Manual + Bullfy + DST Auto + S1/2/3  |
+//|   S2C invalida S1 + 2Qe Directo + Trailing 1.80R/2.0R + Swings   |
 //+------------------------------------------------------------------+
 #property copyright "Estrategia Nova"
-#property version   "3.00"
+#property version   "3.10"
 
 #include <Trade\Trade.mqh>
 
@@ -14,13 +14,13 @@
 //+------------------------------------------------------------------+
 enum ENUM_QE_PB_MODE
   {
-   PB_MODE_COUNTER_OR_PAUSE = 0, // Fiel Nova: N velas contrarias o N pausas sin nuevo extremo
-   PB_MODE_LEGACY           = 1  // Modo simple: N velas sin nuevo extremo
+   PB_MODE_COUNTER_OR_PAUSE = 0, // Fiel Nova: vela contraria o detenimiento sin nuevo extremo
+   PB_MODE_LEGACY           = 1  // Modo simple: vela sin superar extremo previo
   };
 
 enum ENUM_TRAIL_MODE
   {
-   TRAIL_NOVA_SWING = 0,         // Estándar Nova (+0.50/-0.25, +0.80/+0.50, +1.18/+1.15, >=1.20 swings)
+   TRAIL_NOVA_SWING = 0,         // Estándar Nova (+0.50/-0.25, +0.80/+0.50, +1.80/+1.15, >=2.00 swings)
    TRAIL_OPTIMIZED  = 1          // Optimizado (+0.65/BE, +1.00/+0.50, +1.50/+1.00, >=2.00 swings)
   };
 
@@ -33,13 +33,14 @@ input int    InpRangeStartHour        = 2;               // Hora inicio rango (N
 input int    InpRangeStartMin         = 0;               // Minuto inicio rango (NY)
 input int    InpRangeEndHour          = 7;               // Hora fin rango (NY)
 input int    InpRangeEndMin           = 0;               // Minuto fin rango (NY)
-input int    InpSessionStartHour      = 8;               // Inicio ventana órdenes NY
-input int    InpSessionStartMin       = 0;               // Minuto inicio ventana órdenes NY
+input int    InpSessionStartHour      = 8;               // Inicio ventana operativa NY (caja amarilla 08:00)
+input int    InpSessionStartMin       = 0;               // Minuto inicio ventana operativa NY
 input int    InpLastEntryHourNY       = 15;              // Hora límite nuevas entradas NY
 input int    InpLastEntryMinNY        = 0;               // Minuto límite nuevas entradas NY
 input int    InpSessionEndHour        = 15;              // Hora fin gestión NY
 input int    InpSessionEndMin         = 45;              // Minuto fin gestión NY
 input bool   InpEnableAsiaSession     = false;           // Habilitar sesión Asia (18:00 - 21:30 NY)
+input bool   InpAllowSundayAsia       = true;            // En domingo Asia usar último rango válido (viernes)
 input int    InpAsiaStartHour         = 18;              // Hora inicio entradas Asia (NY)
 input int    InpAsiaStartMin          = 0;               // Minuto inicio entradas Asia (NY)
 input int    InpAsiaLastEntryHour     = 21;              // Hora límite entradas Asia (NY)
@@ -69,21 +70,22 @@ input group "=== 3. SETUPS Y REGLAS OPERATIVAS ==="
 input bool            InpEnableSetup1          = true;   // Activar Setup 1
 input bool            InpEnableSetup2Nac       = true;   // Activar Setup 2 Nacimiento
 input bool            InpEnableSetup2Cont      = true;   // Activar Setup 2 Continuación
+input bool            InpS2C_InvalidatesS1     = true;   // Si se activa S2 Continuación, invalidar Setup 1
 input bool            InpEnableSetup3Filter    = true;   // Activar Filtro Setup 3 (barrido bilateral)
-input bool            InpObserveFrom7AM        = true;   // Evaluar estructura desde las 07:00 NY
-input bool            InpArmPre8AMTriggerAt8AM = true;   // Armar a las 08:00 NY si la señal cerró entre 07:00 y 08:00
+input bool            InpObserveFrom7AM        = false;  // false = Evaluar estructura desde 08:00 NY (caja amarilla)
+input bool            InpArmPre8AMTriggerAt8AM = false;  // Armar a las 08:00 NY si se observó señal pre-08:00
 input ENUM_QE_PB_MODE InpQePBMode              = PB_MODE_COUNTER_OR_PAUSE; // Modo de conteo de retrocesos Qe
-input int             InpPullbackCandles       = 2;      // Velas contrarias o de pausa para fijar 1Qe/2Qe
-input bool            InpDirect2QeEntry        = false;  // false = Confirmación Premium (cierre con cuerpo)
+input int             InpPullbackCandles       = 1;      // Velas contrarias o detenimiento para fijar 1Qe/2Qe (TV: 1)
+input bool            InpDirect2QeEntry        = true;   // true = Stop directo sobre el nivel 2Qe (fiel capturas TV)
 input double          InpEntryBufferPts        = 1.5;    // Buffer entrada Stop en puntos del índice
 input double          InpSLBufferPts           = 2.0;    // Buffer de SL en puntos del índice
 input bool            InpS1_AllowDeepPullback  = true;   // Permitir retroceso profundo en Setup 1 antes de 1Qe
 input bool            InpS2C_AllowDeepPullback = true;   // Permitir retroceso profundo en Setup 2 Cont
-input bool            InpFilter930Open         = true;   // Gestionar apertura 09:30 NY
+input bool            InpFilter930Open         = true;   // Gestionar apertura 09:30 NY (esperar vela si PE cae ~09:30)
 input bool            InpClose1540Rule         = true;   // Cerrar BE / leve negativo a las 15:40 NY (solo NY)
 input bool            InpAvoid10AMHour         = false;  // Evitar nuevas señales de 10:00 a 10:59 NY
 input int             InpGracePeriodMins       = 60;     // Hora de gracia sin momentum (minutos)
-input double          InpGraceMinRR            = 0.20;   // RR mínimo para conservar operación tras hora de gracia
+input double          InpGraceMinRR            = 0.20;   // RR mínimo al cumplir la hora si aún no hubo momentum
 
 input group "=== 4. UMBRALES SETUP 1, 2 CONTINUACIÓN Y SETUP 3 ==="
 input double InpS1_1QR_Pct              = 0.20;          // Setup 1: Quiebre inicial 1QR (%)
@@ -91,9 +93,9 @@ input double InpS2C_2QR_Pct             = 0.15;          // Setup 2 Cont: Quiebr
 input bool   InpS2C_RequireS2NStructure = false;         // Exigir CH previo antes de habilitar S2C
 input double InpCont_SL_AgresPct        = 0.50;          // Distancia > X% para SL Agresivo
 input double InpCont_SL_ModMinPct       = 0.30;          // Distancia >= X% para SL Moderado
-input double InpS3_MinOutPct            = 0.05;          // Salida mínima del rango (%) para contar Setup 3
-input bool   InpS3_RequireBodyBreak     = false;         // Exigir cierre con cuerpo fuera del rango en Setup 3
-input bool   InpS3_RequireMidCross      = true;          // Exigir cruce de 50% al retomar dirección contraria
+input double InpS3_MinOutPct            = 0.05;          // Salida mínima del rango (%) en cada extremo para Setup 3
+input bool   InpS3_RequireBodyBreak     = true;          // Exigir cierre con cuerpo fuera de ambos lados en Setup 3
+input bool   InpS3_RequireMidCross      = true;          // Exigir cruce de 50% con cuerpo al retomar dirección contraria
 
 input group "=== 5. UMBRALES SETUP 2 NACIMIENTO ==="
 input double InpS2N_1QR_Pct             = 0.05;          // Setup 2 Nac: Quiebre/absorción mínima (%)
@@ -104,21 +106,28 @@ input double InpS2N_SL_AgresPct         = 0.25;          // Distancia > X% para 
 input double InpS2N_SL_ModMinPct        = 0.15;          // Distancia >= X% para SL Moderado
 input double InpS2N_SL_AgresSweepFrac   = 0.50;          // Fracción de barrido externo (0% <-> Extremo CH) para SL A
 input int    InpS2N_MaxTradesPerDay     = 1;             // Máximo de trades Setup 2 Nacimiento por día
-input bool   InpS2N_AvoidOpen10AM       = true;          // Bloquear barridos 1QR S2 Nac entre 09:25 y 09:55 NY
+input bool   InpS2N_AvoidOpen10AM       = false;         // Bloquear barridos 1QR S2 Nac entre 09:25 y 09:55 NY
 
 input group "=== 6. GESTIÓN, TRAILING, JUDAS Y ABLACIÓN ==="
-input bool            InpExit_Grace        = true;       // Activar salida por hora de gracia
-input bool            InpExit_Open930      = true;       // Activar gestión apertura 09:30 NY
-input bool            InpExit_Trailing     = true;       // Activar trailing por RR y swings
-input bool            InpExit_EndOfDay     = true;       // Activar cierre 15:40 NY
-input ENUM_TRAIL_MODE InpTrailMode         = TRAIL_NOVA_SWING; // Modo de trailing por RR
-input int             InpSwingFractalBars  = 2;          // Velas a cada lado para swing fractal M5
-input int             InpSwingLookbackBars = 30;         // Máximo de velas M5 para buscar swings
-input bool            InpEnableJudasCut    = false;      // Cortar en contra cerca de -0.50 RR (Judas)
-input double          InpJudasTriggerRR    = -0.50;      // Umbral RR negativo para corte Judas
-input double          InpTP_R_S1           = 5.0;        // TP Setup 1 (múltiplo de R)
-input double          InpTP_R_S2C          = 5.0;        // TP Setup 2 Continuación (múltiplo de R)
-input double          InpTP_R_S2N          = 4.0;        // TP Setup 2 Nacimiento (múltiplo de R)
+input bool            InpExit_Grace         = true;      // Activar salida por hora de gracia (1 sola vez a los 60m)
+input bool            InpExit_Open930       = true;      // Activar gestión apertura 09:30 NY
+input bool            InpExit_Trailing      = true;      // Activar trailing por RR y swings
+input bool            InpExit_EndOfDay      = true;      // Activar cierre 15:40 NY
+input ENUM_TRAIL_MODE InpTrailMode          = TRAIL_NOVA_SWING; // Modo de trailing por RR
+input double          InpTrail_Step1_TrigRR = 0.50;      // Escalón 1: activar al llegar a +X RR
+input double          InpTrail_Step1_SL_RR  = -0.25;     // Escalón 1: mover SL a X RR (-0.25R)
+input double          InpTrail_Step2_TrigRR = 0.80;      // Escalón 2: activar al llegar a +X RR
+input double          InpTrail_Step2_SL_RR  = 0.50;      // Escalón 2: mover SL a +X RR (+0.50R)
+input double          InpTrail_Step3_TrigRR = 1.80;      // Escalón 3: activar al llegar a +X RR (+1.80R)
+input double          InpTrail_Step3_SL_RR  = 1.15;      // Escalón 3: mover SL a +X RR (+1.15R)
+input double          InpTrail_SwingStartRR = 2.00;      // Desde +X RR seguir swings fractales reales M5 hasta TP
+input int             InpSwingFractalBars   = 2;         // Velas a cada lado para swing fractal M5
+input int             InpSwingLookbackBars  = 40;        // Máximo de velas M5 para buscar swings
+input bool            InpEnableJudasCut     = false;     // Cortar en contra cerca de -0.50 RR (Judas)
+input double          InpJudasTriggerRR     = -0.50;     // Umbral RR negativo para corte Judas
+input double          InpTP_R_S1            = 5.0;       // TP Setup 1 (múltiplo de R)
+input double          InpTP_R_S2C           = 5.0;       // TP Setup 2 Continuación (múltiplo de R)
+input double          InpTP_R_S2N           = 4.0;       // TP Setup 2 Nacimiento (múltiplo de R)
 
 input group "=== 7. TRAZA DE DIAGNÓSTICO ==="
 input bool   InpDebugTrace              = false;         // Escribir CSV de decisiones (Common\Files)
@@ -167,7 +176,9 @@ struct QeMachine
    double        maxRRReached;
    string        slType;
    bool          open930Done;
+   bool          graceDone;
    bool          pausedByNews;
+   bool          waitOpen930;
    bool          orderInAsia;
   };
 
@@ -190,6 +201,8 @@ double         g_RangeHigh            = 0.0;
 double         g_RangeLow             = 0.0;
 double         g_RangeMid             = 0.0;
 double         g_RangePct             = 0.0;
+double         g_LastValidRangeHigh   = 0.0;
+double         g_LastValidRangeLow    = 0.0;
 bool           g_RangeReady           = false;
 bool           g_RangeFinalized       = false;
 
@@ -222,6 +235,7 @@ double         g_S2NProtectedExtreme  = 0.0;
 double         g_S2NXPivot            = 0.0;
 double         g_S2NCHLevel           = 0.0;
 bool           g_S2NXPivotSet         = false;
+bool           g_S2NCHLockedFromX     = false;
 bool           g_S2NPullbackSeen      = false;
 bool           g_S2NReached50         = false;
 double         g_S2NBOSHigh           = 0.0;
@@ -231,7 +245,9 @@ double         g_S2NInitRisk          = 0.0;
 double         g_S2NMaxRRReached      = 0.0;
 string         g_S2NSLType            = "";
 bool           g_S2NOpen930Done       = false;
+bool           g_S2NGraceDone         = false;
 bool           g_S2NPausedByNews      = false;
+bool           g_S2NWaitOpen930       = false;
 bool           g_S2NOrderInAsia       = false;
 int            g_S2NTradesToday       = 0;
 
@@ -586,11 +602,14 @@ int OnInit()
 
    TraceInit();
 
-   Print("NOVA v3.00 | ", _Symbol, " ", EnumToString(_Period),
+   Print("NOVA v3.10 | ", _Symbol, " ", EnumToString(_Period),
          " | autoDST=", (InpAutoDST ? "ON" : "OFF"),
          " | offsetNY=", (g_NYOffsetSec / 3600), "h",
-         " | riesgo=", DoubleToString(InpRiskPercent, 2), "%",
-         " | TP_R=", DoubleToString(InpTP_R_S1, 2), "/", DoubleToString(InpTP_R_S2C, 2), "/", DoubleToString(InpTP_R_S2N, 2));
+         " | obs7AM=", (InpObserveFrom7AM ? "ON" : "OFF"),
+         " | PB=", InpPullbackCandles, " direct2Qe=", (InpDirect2QeEntry ? "ON" : "OFF"),
+         " | S2C->invS1=", (InpS2C_InvalidatesS1 ? "ON" : "OFF"),
+         " | trail=", DoubleToString(InpTrail_Step3_TrigRR, 2), "->", DoubleToString(InpTrail_Step3_SL_RR, 2),
+         " | riesgo=", DoubleToString(InpRiskPercent, 2), "%");
 
    if(InpUseNewsFilter)
      {
@@ -679,7 +698,32 @@ void OnTick()
    else
      {
       if(!g_RangeFinalized)
+        {
          g_RangeFinalized = CalcularRango(srvRangeStart, srvRangeEnd - 1, true);
+         if(g_RangeFinalized)
+           {
+            g_LastValidRangeHigh = g_RangeHigh;
+            g_LastValidRangeLow  = g_RangeLow;
+           }
+         else if(dtNy.day_of_week == 0 && InpEnableAsiaSession && InpAllowSundayAsia)
+           {
+            // Domingo sin sesión 02:00-07:00 propia: usar el rango del viernes previo ("nuestro rango sigue siendo el mismo")
+            if(g_LastValidRangeHigh > g_LastValidRangeLow && g_LastValidRangeLow > 0.0)
+              {
+               g_RangeHigh      = g_LastValidRangeHigh;
+               g_RangeLow       = g_LastValidRangeLow;
+               g_RangeMid       = (g_RangeHigh + g_RangeLow) / 2.0;
+               g_RangePct       = ((g_RangeHigh - g_RangeLow) / g_RangeLow) * 100.0;
+               g_RangeFinalized = true;
+              }
+            else if(CalcularRango(srvRangeStart - 2 * 86400, srvRangeEnd - 2 * 86400 - 1, true))
+              {
+               g_LastValidRangeHigh = g_RangeHigh;
+               g_LastValidRangeLow  = g_RangeLow;
+               g_RangeFinalized     = true;
+              }
+           }
+        }
 
       g_RangeReady = (g_RangeFinalized && g_RangeHigh > 0.0 && g_RangeLow > 0.0 && g_RangeHigh > g_RangeLow);
 
@@ -753,12 +797,13 @@ void OnTick()
                  Fmt(g_RangeHigh * (1.0 + InpS2N_1QR_Pct / 100.0)));
         }
 
-      bool puedeColocar = EstaEnVentanaEntradas(nyTime, nySessStart, nyLastEntry, nyAsiaStart, nyAsiaLastEntry) &&
-                          !bloqueadoPorNoticia && !cercaDeNoticia && !g_FOMCBlockedNY && !g_SessionBlockedS3 && !g_DailyDDBreached;
+      bool esperando930 = EnEsperaApertura930(nyTime);
+      bool puedeColocar = EstaEnVentanaEntradas(nyTime, nySessStart, nyLastEntry + 59, nyAsiaStart, nyAsiaLastEntry + 59) &&
+                          !esperando930 && !bloqueadoPorNoticia && !cercaDeNoticia && !g_FOMCBlockedNY && !g_SessionBlockedS3 && !g_DailyDDBreached;
 
-      // Si había señales esperando apertura 08:00 o fin de pausa por noticia, armarlas al entrar en ventana
+      // Si había señales esperando apertura 08:00, cierre de vela 09:30 o fin de pausa por noticia, armarlas al entrar en ventana
       if(puedeColocar)
-         IntentarArmarPendientesEnEspera(srvTime, nyTime, nyLastEntry, nyAsiaStart, nyAsiaLastEntry, srvSessEnd, srvAsiaLastEntry);
+         IntentarArmarPendientesEnEspera(srvTime, nyTime, srvMarketOpen, nyLastEntry, nyAsiaStart, nyAsiaLastEntry, srvSessEnd, srvAsiaLastEntry);
 
       // Si se salió de la ventana de noticia, limpiar bandera de pausa tras evaluar rearmado
       if(!bloqueadoPorNoticia && !cercaDeNoticia && !g_FOMCBlockedNY && !g_DailyDDBreached)
@@ -785,7 +830,7 @@ void OnTick()
                               EstaEnVentanaEntradas(closedBarNY, nySessStart, nyLastEntry, nyAsiaStart, nyAsiaLastEntry);
 
          if(enObservacion && !g_SessionBlockedS3 && !g_DailyDDBreached && !g_FOMCBlockedNY)
-            EvaluarVela(closedBarNY, 1, false, puedeColocar, nyLastEntry, nyAsiaStart, nyAsiaLastEntry, srvSessEnd, srvAsiaLastEntry);
+            EvaluarVela(closedBarNY, 1, false, puedeColocar, esperando930, nyLastEntry, nyAsiaStart, nyAsiaLastEntry, srvSessEnd, srvAsiaLastEntry);
 
          if(InpDebugTrace && InpTraceBars)
            {
@@ -860,6 +905,16 @@ bool EstaEnVentanaEntradas(datetime nyTime, datetime nySessStart, datetime nyLas
    return false;
   }
 
+bool EnEsperaApertura930(datetime nyTime)
+  {
+   if(!InpFilter930Open) return false;
+   MqlDateTime dt;
+   TimeToStruct(nyTime, dt);
+   int secOfDay = dt.hour * 3600 + dt.min * 60 + dt.sec;
+   // Si el PE cae justo en 09:25 - 09:34:59 NY, esperar a las 09:35 NY (cierre de la vela de apertura 09:30)
+   return (secOfDay >= (9 * 3600 + 25 * 60) && secOfDay < (9 * 3600 + 35 * 60));
+  }
+
 bool EstaFueraDeObservacion(datetime barNY, datetime nyLastEntry, datetime nyAsiaStart, datetime nyAsiaLastEntry)
   {
    if(barNY <= nyLastEntry) return false;
@@ -881,7 +936,9 @@ void ResetearQeMachine(QeMachine &m)
    m.maxRRReached = 0.0;
    m.slType       = "";
    m.open930Done  = false;
+   m.graceDone    = false;
    m.pausedByNews = false;
+   m.waitOpen930  = false;
    m.orderInAsia  = false;
   }
 
@@ -935,6 +992,7 @@ void ResetearEstadoDiario()
    g_S2NXPivot            = 0.0;
    g_S2NCHLevel           = 0.0;
    g_S2NXPivotSet         = false;
+   g_S2NCHLockedFromX     = false;
    g_S2NPullbackSeen      = false;
    g_S2NReached50         = false;
    g_S2NBOSHigh           = 0.0;
@@ -944,7 +1002,9 @@ void ResetearEstadoDiario()
    g_S2NMaxRRReached      = 0.0;
    g_S2NSLType            = "";
    g_S2NOpen930Done       = false;
+   g_S2NGraceDone         = false;
    g_S2NPausedByNews      = false;
+   g_S2NWaitOpen930       = false;
    g_S2NOrderInAsia       = false;
    g_S2NTradesToday       = 0;
   }
@@ -991,7 +1051,7 @@ void ReconstruirEstructuraHoy(datetime srvRangeStart, datetime srvRangeEnd, date
          datetime barSrv = iTime(_Symbol, PERIOD_M5, s);
          datetime barNY  = barSrv - g_NYOffsetSec;
          if(!EstaFueraDeObservacion(barNY, nyLastEntry, nyAsiaStart, nyAsiaLastEntry) && !g_SessionBlockedS3)
-            EvaluarVela(barNY, s, true, false, nyLastEntry, nyAsiaStart, nyAsiaLastEntry, 0, 0);
+            EvaluarVela(barNY, s, true, false, false, nyLastEntry, nyAsiaStart, nyAsiaLastEntry, 0, 0);
         }
      }
 
@@ -1128,7 +1188,7 @@ bool EvaluarFiltroSetup3(double open1, double high1, double low1, double close1,
    return false;
   }
 
-void EvaluarVela(datetime nyTime, int shift, bool soloReconstruccion, bool puedeColocar,
+void EvaluarVela(datetime nyTime, int shift, bool soloReconstruccion, bool puedeColocar, bool esperando930,
                  datetime nyLastEntry, datetime nyAsiaStart, datetime nyAsiaLastEntry,
                  datetime srvSessEnd, datetime srvAsiaLastEntry)
   {
@@ -1148,7 +1208,6 @@ void EvaluarVela(datetime nyTime, int shift, bool soloReconstruccion, bool puede
    if(InpAvoid10AMHour && minsNY >= (10 * 60) && minsNY < (11 * 60))
       return;
 
-   bool enLatigazo930        = (InpFilter930Open && minsNY >= (9 * 60 + 25) && minsNY < (9 * 60 + 35));
    bool bloqueadoAperturaS2N = (InpS2N_AvoidOpen10AM && minsNY >= (9 * 60 + 25) && minsNY < (9 * 60 + 55));
 
    double s1Buy1QR   = g_RangeHigh * (1.0 + InpS1_1QR_Pct / 100.0);
@@ -1159,7 +1218,12 @@ void EvaluarVela(datetime nyTime, int shift, bool soloReconstruccion, bool puede
    // Registro autónomo del primer barrido/quiebre (>= 0.05%) para Setup 2 Continuación
    if(!g_HadSideBreakout)
      {
-      if(low1 <= s2nBuy1QR)
+      if(low1 <= s2nBuy1QR && high1 >= s2nSell1QR)
+        {
+         g_HadSideBreakout = true;
+         g_FirstBreakDir   = (close1 >= open1) ? -1 : 1;
+        }
+      else if(low1 <= s2nBuy1QR)
         {
          g_HadSideBreakout = true;
          g_FirstBreakDir   = -1;
@@ -1171,8 +1235,67 @@ void EvaluarVela(datetime nyTime, int shift, bool soloReconstruccion, bool puede
         }
      }
 
-   //--- A. Setup 1: 1QR >= 0.20% con cuerpo
-   if(InpEnableSetup1 && !enLatigazo930 && g_S1.stage == QE_INACTIVE && g_S1.tradesToday == 0)
+   //--- A. Setup 2 Nacimiento: 1QR >= 0.05% (con o sin cuerpo). NO invalida Setup 1.
+   if(InpEnableSetup2Nac && !bloqueadoAperturaS2N && g_S2NStage == S2N_WAIT_1QR && g_S2NTradesToday < InpS2N_MaxTradesPerDay)
+     {
+      if(low1 <= s2nBuy1QR)
+        {
+         g_S2NDir = 1; g_S2NExtreme = low1; g_S2NXPivot = high1; g_S2NCHLevel = high1;
+         g_S2NXPivotSet = false; g_S2NCHLockedFromX = false; g_S2NPullbackSeen = false; g_S2NReached50 = false; g_S2NInternalRef = low1;
+         g_S2NStage = S2N_WAIT_CH;
+         DibujarNivelEstructura("NOVA_S2N_1QR_" + TimeToString(time1), time1, low1, "S2 Nac 1QR", clrDarkOrange, false);
+        }
+      else if(high1 >= s2nSell1QR)
+        {
+         g_S2NDir = -1; g_S2NExtreme = high1; g_S2NXPivot = low1; g_S2NCHLevel = low1;
+         g_S2NXPivotSet = false; g_S2NCHLockedFromX = false; g_S2NPullbackSeen = false; g_S2NReached50 = false; g_S2NInternalRef = high1;
+         g_S2NStage = S2N_WAIT_CH;
+         DibujarNivelEstructura("NOVA_S2N_1QR_" + TimeToString(time1), time1, high1, "S2 Nac 1QR", clrDarkOrange, true);
+        }
+     }
+
+   //--- B. Progresión Setup 2 Nacimiento
+   if(InpEnableSetup2Nac && g_S2NStage != S2N_WAIT_1QR && g_S2NStage != S2N_FINISHED)
+      ProcesarSetup2NacimientoVela(open1, high1, low1, close1, time1, soloReconstruccion, puedeColocar, esperando930,
+                                    nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
+
+   //--- C. Setup 2 Continuación: Quiebre opuesto >= 0.15% con cuerpo (se evalúa ANTES de S1: si activa, invalida S1)
+   bool structOkS2C = !InpS2C_RequireS2NStructure || (g_S2NStructureConfirmed && g_S2NStructDir == -g_FirstBreakDir);
+   if(InpEnableSetup2Cont && g_HadSideBreakout && structOkS2C && g_S2C.stage == QE_INACTIVE && g_S2C.tradesToday == 0)
+     {
+      double s2cBuy2QR  = g_RangeHigh * (1.0 + InpS2C_2QR_Pct / 100.0);
+      double s2cSell2QR = g_RangeLow  * (1.0 - InpS2C_2QR_Pct / 100.0);
+      bool s2cActivado  = false;
+
+      if(g_FirstBreakDir == -1 && close1 >= s2cBuy2QR && close1 > open1)
+        {
+         g_S2C.dir = 1; g_S2C.extreme = high1; g_S2C.pbCount = 0; g_S2C.stage = QE_WAIT_1QE_PB;
+         DibujarNivelEstructura("NOVA_S2C_2QR_" + TimeToString(time1), time1, high1, "S2C 2QR", clrTeal, true);
+         s2cActivado = true;
+        }
+      else if(g_FirstBreakDir == 1 && close1 <= s2cSell2QR && close1 < open1)
+        {
+         g_S2C.dir = -1; g_S2C.extreme = low1; g_S2C.pbCount = 0; g_S2C.stage = QE_WAIT_1QE_PB;
+         DibujarNivelEstructura("NOVA_S2C_2QR_" + TimeToString(time1), time1, low1, "S2C 2QR", clrMaroon, false);
+         s2cActivado = true;
+        }
+
+      if(s2cActivado && InpS2C_InvalidatesS1)
+        {
+         if(!soloReconstruccion)
+            CancelarPendientesPorMagic(MAGIC_S1);
+         if(g_S1.stage != QE_IN_TRADE)
+           {
+            g_S1.stage        = QE_FINISHED;
+            g_S1.pausedByNews = false;
+            g_S1.waitOpen930  = false;
+            TraceEv("INVALIDATE", "S1", g_S2C.dir, close1, 0, 0, 0, "S1 invalidado al activarse S2C");
+           }
+        }
+     }
+
+   //--- D. Setup 1: 1QR >= 0.20% con cuerpo (sigue operable aunque S2N se haya activado, mientras S2C no lo haya invalidado)
+   if(InpEnableSetup1 && g_S1.stage == QE_INACTIVE && g_S1.tradesToday == 0)
      {
       if(close1 >= s1Buy1QR && close1 > open1)
         {
@@ -1186,61 +1309,18 @@ void EvaluarVela(datetime nyTime, int shift, bool soloReconstruccion, bool puede
         }
      }
 
-   //--- B. Setup 2 Nacimiento: 1QR >= 0.05% (con o sin cuerpo)
-   if(InpEnableSetup2Nac && !bloqueadoAperturaS2N && g_S2NStage == S2N_WAIT_1QR && g_S2NTradesToday < InpS2N_MaxTradesPerDay)
-     {
-      if(low1 <= s2nBuy1QR)
-        {
-         g_S2NDir = 1; g_S2NExtreme = low1; g_S2NXPivot = high1; g_S2NCHLevel = high1;
-         g_S2NXPivotSet = false; g_S2NPullbackSeen = false; g_S2NReached50 = false; g_S2NInternalRef = low1;
-         g_S2NStage = S2N_WAIT_CH;
-         DibujarNivelEstructura("NOVA_S2N_1QR_" + TimeToString(time1), time1, low1, "S2 Nac 1QR", clrDarkOrange, false);
-        }
-      else if(high1 >= s2nSell1QR)
-        {
-         g_S2NDir = -1; g_S2NExtreme = high1; g_S2NXPivot = low1; g_S2NCHLevel = low1;
-         g_S2NXPivotSet = false; g_S2NPullbackSeen = false; g_S2NReached50 = false; g_S2NInternalRef = high1;
-         g_S2NStage = S2N_WAIT_CH;
-         DibujarNivelEstructura("NOVA_S2N_1QR_" + TimeToString(time1), time1, high1, "S2 Nac 1QR", clrDarkOrange, true);
-        }
-     }
-
-   //--- C. Progresión Setup 2 Nacimiento
-   if(InpEnableSetup2Nac && g_S2NStage != S2N_WAIT_1QR && g_S2NStage != S2N_FINISHED)
-      ProcesarSetup2NacimientoVela(open1, high1, low1, close1, time1, soloReconstruccion, puedeColocar,
-                                    nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
-
-   //--- D. Setup 2 Continuación: Quiebre opuesto >= 0.15% con cuerpo
-   bool structOkS2C = !InpS2C_RequireS2NStructure || (g_S2NStructureConfirmed && g_S2NStructDir == -g_FirstBreakDir);
-   if(InpEnableSetup2Cont && !enLatigazo930 && g_HadSideBreakout && structOkS2C && g_S2C.stage == QE_INACTIVE && g_S2C.tradesToday == 0)
-     {
-      double s2cBuy2QR  = g_RangeHigh * (1.0 + InpS2C_2QR_Pct / 100.0);
-      double s2cSell2QR = g_RangeLow  * (1.0 - InpS2C_2QR_Pct / 100.0);
-
-      if(g_FirstBreakDir == -1 && close1 >= s2cBuy2QR && close1 > open1)
-        {
-         g_S2C.dir = 1; g_S2C.extreme = high1; g_S2C.pbCount = 0; g_S2C.stage = QE_WAIT_1QE_PB;
-         DibujarNivelEstructura("NOVA_S2C_2QR_" + TimeToString(time1), time1, high1, "S2C 2QR", clrTeal, true);
-        }
-      else if(g_FirstBreakDir == 1 && close1 <= s2cSell2QR && close1 < open1)
-        {
-         g_S2C.dir = -1; g_S2C.extreme = low1; g_S2C.pbCount = 0; g_S2C.stage = QE_WAIT_1QE_PB;
-         DibujarNivelEstructura("NOVA_S2C_2QR_" + TimeToString(time1), time1, low1, "S2C 2QR", clrMaroon, false);
-        }
-     }
-
    //--- E. Progresión Motor Qe (Setup 1 y Setup 2 Continuación)
    if(InpEnableSetup1 && g_S1.stage != QE_INACTIVE && g_S1.stage != QE_FINISHED)
       ProcesarMotorQeVela(g_S1, MAGIC_S1, false, open1, high1, low1, close1, time1,
-                          soloReconstruccion, puedeColocar, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
+                          soloReconstruccion, puedeColocar, esperando930, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
 
    if(InpEnableSetup2Cont && g_S2C.stage != QE_INACTIVE && g_S2C.stage != QE_FINISHED)
       ProcesarMotorQeVela(g_S2C, MAGIC_S2_CONT, true, open1, high1, low1, close1, time1,
-                          soloReconstruccion, puedeColocar, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
+                          soloReconstruccion, puedeColocar, esperando930, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
   }
 
 void ProcesarSetup2NacimientoVela(double open1, double high1, double low1, double close1, datetime time1,
-                                   bool soloReconstruccion, bool puedeColocar,
+                                   bool soloReconstruccion, bool puedeColocar, bool esperando930,
                                    datetime nyTime, datetime nyAsiaStart, datetime srvSessEnd, datetime srvAsiaLastEntry)
   {
    if(g_S2NStage == S2N_ORDER_ACTIVE || g_S2NStage == S2N_IN_TRADE) return;
@@ -1256,8 +1336,11 @@ void ProcesarSetup2NacimientoVela(double open1, double high1, double low1, doubl
            {
             g_S2NExtreme = low1;
             if(g_S2NXPivotSet)
-               g_S2NCHLevel = g_S2NXPivot; // Mantiene el pivote X/rebote previo como nivel CH
-            else
+              {
+               g_S2NCHLevel       = g_S2NXPivot; // Fija el pivote X previo como CH protegido
+               g_S2NCHLockedFromX = true;
+              }
+            else if(!g_S2NCHLockedFromX)
                g_S2NCHLevel = high1;
             g_S2NXPivot       = high1;
             g_S2NXPivotSet    = false;
@@ -1272,7 +1355,8 @@ void ProcesarSetup2NacimientoVela(double open1, double high1, double low1, doubl
          if(close1 < open1)
            {
             g_S2NPullbackSeen = true;
-            g_S2NCHLevel = MathMax(g_S2NCHLevel, g_S2NXPivot);
+            if(g_S2NXPivotSet)
+               g_S2NCHLevel = MathMax(g_S2NCHLevel, g_S2NXPivot);
            }
          if(close1 > g_S2NCHLevel && close1 > open1 && close1 > g_RangeLow)
            {
@@ -1287,9 +1371,10 @@ void ProcesarSetup2NacimientoVela(double open1, double high1, double low1, doubl
 
             if(!InpS2N_Strict50BOS)
               {
-               g_S2NStage = S2N_READY_ORDER;
+               g_S2NStage       = S2N_READY_ORDER;
+               g_S2NWaitOpen930 = esperando930;
                if(puedeColocar && !soloReconstruccion)
-                  ConfirmarYColocarS2Nac(time1, false, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
+                  ConfirmarYColocarS2Nac(time1, false, 0.0, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
                return;
               }
             g_S2NStage = S2N_WAIT_50_REACTION;
@@ -1297,33 +1382,41 @@ void ProcesarSetup2NacimientoVela(double open1, double high1, double low1, doubl
         }
       else if(g_S2NStage == S2N_WAIT_50_REACTION)
         {
-         if(low1 < g_S2NProtectedExtreme) { g_S2NExtreme = low1; g_S2NStage = S2N_WAIT_CH; g_S2NPullbackSeen = false; return; }
+         if(low1 < g_S2NProtectedExtreme)
+           {
+            g_S2NExtreme = low1; g_S2NCHLockedFromX = false; g_S2NXPivot = high1; g_S2NCHLevel = high1;
+            g_S2NXPivotSet = false; g_S2NStage = S2N_WAIT_CH; g_S2NPullbackSeen = false; return;
+           }
          if(low1 < g_S2NInternalRef && close1 > g_S2NProtectedExtreme) g_S2NInternalRef = low1;
          if(high1 >= g_RangeLow + rangeSize * reactFrac) g_S2NReached50 = true;
 
-         if(g_S2NReached50)
+         double prevBOSHigh = g_S2NBOSHigh;
+         if(high1 > g_S2NBOSHigh) g_S2NBOSHigh = high1;
+
+         if(g_S2NReached50 && (close1 < open1 || high1 <= prevBOSHigh))
            {
-            if(high1 > g_S2NBOSHigh) { g_S2NBOSHigh = high1; }
-            else if(close1 < open1 || high1 <= g_S2NBOSHigh)
-              {
-               g_S2NBOSLevel = g_S2NBOSHigh;
-               g_S2NStage    = S2N_WAIT_BOS;
-               DibujarNivelEstructura("NOVA_S2N_BOS_" + TimeToString(time1), time1, g_S2NBOSLevel, "S2 BOS lvl", clrOrange, true);
-              }
+            g_S2NBOSLevel = g_S2NBOSHigh;
+            g_S2NStage    = S2N_WAIT_BOS;
+            DibujarNivelEstructura("NOVA_S2N_BOS_" + TimeToString(time1), time1, g_S2NBOSLevel, "S2 BOS lvl", clrOrange, true);
            }
-         else if(high1 > g_S2NBOSHigh)
-            g_S2NBOSHigh = high1;
         }
       else if(g_S2NStage == S2N_WAIT_BOS)
         {
-         if(low1 < g_S2NProtectedExtreme) { g_S2NExtreme = low1; g_S2NStage = S2N_WAIT_CH; g_S2NPullbackSeen = false; return; }
+         if(low1 < g_S2NProtectedExtreme)
+           {
+            g_S2NExtreme = low1; g_S2NCHLockedFromX = false; g_S2NXPivot = high1; g_S2NCHLevel = high1;
+            g_S2NXPivotSet = false; g_S2NStage = S2N_WAIT_CH; g_S2NPullbackSeen = false; return;
+           }
          if(low1 < g_S2NInternalRef) g_S2NInternalRef = low1;
          if(close1 > g_S2NBOSLevel && close1 > open1)
            {
-            g_S2NStage = S2N_READY_ORDER;
+            g_S2NStage       = S2N_READY_ORDER;
+            g_S2NWaitOpen930 = esperando930;
             if(puedeColocar && !soloReconstruccion)
-               ConfirmarYColocarS2Nac(time1, false, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
+               ConfirmarYColocarS2Nac(time1, false, 0.0, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
            }
+         else if(high1 > g_S2NBOSLevel)
+            g_S2NBOSLevel = high1;
         }
      }
    else if(g_S2NDir == -1) // Venta: barrido sobre g_RangeHigh
@@ -1334,8 +1427,11 @@ void ProcesarSetup2NacimientoVela(double open1, double high1, double low1, doubl
            {
             g_S2NExtreme = high1;
             if(g_S2NXPivotSet)
-               g_S2NCHLevel = g_S2NXPivot; // Mantiene el pivote X/rebote previo como nivel CH
-            else
+              {
+               g_S2NCHLevel       = g_S2NXPivot; // Fija el pivote X previo como CH protegido
+               g_S2NCHLockedFromX = true;
+              }
+            else if(!g_S2NCHLockedFromX)
                g_S2NCHLevel = low1;
             g_S2NXPivot       = low1;
             g_S2NXPivotSet    = false;
@@ -1350,7 +1446,8 @@ void ProcesarSetup2NacimientoVela(double open1, double high1, double low1, doubl
          if(close1 > open1)
            {
             g_S2NPullbackSeen = true;
-            g_S2NCHLevel = MathMin(g_S2NCHLevel, g_S2NXPivot);
+            if(g_S2NXPivotSet)
+               g_S2NCHLevel = MathMin(g_S2NCHLevel, g_S2NXPivot);
            }
          if(close1 < g_S2NCHLevel && close1 < open1 && close1 < g_RangeHigh)
            {
@@ -1365,9 +1462,10 @@ void ProcesarSetup2NacimientoVela(double open1, double high1, double low1, doubl
 
             if(!InpS2N_Strict50BOS)
               {
-               g_S2NStage = S2N_READY_ORDER;
+               g_S2NStage       = S2N_READY_ORDER;
+               g_S2NWaitOpen930 = esperando930;
                if(puedeColocar && !soloReconstruccion)
-                  ConfirmarYColocarS2Nac(time1, false, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
+                  ConfirmarYColocarS2Nac(time1, false, 0.0, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
                return;
               }
             g_S2NStage = S2N_WAIT_50_REACTION;
@@ -1375,38 +1473,46 @@ void ProcesarSetup2NacimientoVela(double open1, double high1, double low1, doubl
         }
       else if(g_S2NStage == S2N_WAIT_50_REACTION)
         {
-         if(high1 > g_S2NProtectedExtreme) { g_S2NExtreme = high1; g_S2NStage = S2N_WAIT_CH; g_S2NPullbackSeen = false; return; }
+         if(high1 > g_S2NProtectedExtreme)
+           {
+            g_S2NExtreme = high1; g_S2NCHLockedFromX = false; g_S2NXPivot = low1; g_S2NCHLevel = low1;
+            g_S2NXPivotSet = false; g_S2NStage = S2N_WAIT_CH; g_S2NPullbackSeen = false; return;
+           }
          if(high1 > g_S2NInternalRef && close1 < g_S2NProtectedExtreme) g_S2NInternalRef = high1;
          if(low1 <= g_RangeHigh - rangeSize * reactFrac) g_S2NReached50 = true;
 
-         if(g_S2NReached50)
+         double prevBOSLow = g_S2NBOSHigh;
+         if(low1 < g_S2NBOSHigh) g_S2NBOSHigh = low1;
+
+         if(g_S2NReached50 && (close1 > open1 || low1 >= prevBOSLow))
            {
-            if(low1 < g_S2NBOSHigh) { g_S2NBOSHigh = low1; }
-            else if(close1 > open1 || low1 >= g_S2NBOSHigh)
-              {
-               g_S2NBOSLevel = g_S2NBOSHigh;
-               g_S2NStage    = S2N_WAIT_BOS;
-               DibujarNivelEstructura("NOVA_S2N_BOS_" + TimeToString(time1), time1, g_S2NBOSLevel, "S2 BOS lvl", clrOrange, false);
-              }
+            g_S2NBOSLevel = g_S2NBOSHigh;
+            g_S2NStage    = S2N_WAIT_BOS;
+            DibujarNivelEstructura("NOVA_S2N_BOS_" + TimeToString(time1), time1, g_S2NBOSLevel, "S2 BOS lvl", clrOrange, false);
            }
-         else if(low1 < g_S2NBOSHigh)
-            g_S2NBOSHigh = low1;
         }
       else if(g_S2NStage == S2N_WAIT_BOS)
         {
-         if(high1 > g_S2NProtectedExtreme) { g_S2NExtreme = high1; g_S2NStage = S2N_WAIT_CH; g_S2NPullbackSeen = false; return; }
+         if(high1 > g_S2NProtectedExtreme)
+           {
+            g_S2NExtreme = high1; g_S2NCHLockedFromX = false; g_S2NXPivot = low1; g_S2NCHLevel = low1;
+            g_S2NXPivotSet = false; g_S2NStage = S2N_WAIT_CH; g_S2NPullbackSeen = false; return;
+           }
          if(high1 > g_S2NInternalRef) g_S2NInternalRef = high1;
          if(close1 < g_S2NBOSLevel && close1 < open1)
            {
-            g_S2NStage = S2N_READY_ORDER;
+            g_S2NStage       = S2N_READY_ORDER;
+            g_S2NWaitOpen930 = esperando930;
             if(puedeColocar && !soloReconstruccion)
-               ConfirmarYColocarS2Nac(time1, false, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
+               ConfirmarYColocarS2Nac(time1, false, 0.0, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
            }
+         else if(low1 < g_S2NBOSLevel)
+            g_S2NBOSLevel = low1;
         }
      }
   }
 
-void ConfirmarYColocarS2Nac(datetime time1, bool soloReconstruccion,
+void ConfirmarYColocarS2Nac(datetime time1, bool soloReconstruccion, double open930ExtremePrice,
                             datetime nyTime, datetime nyAsiaStart, datetime srvSessEnd, datetime srvAsiaLastEntry)
   {
    if(g_S2NTradesToday >= InpS2N_MaxTradesPerDay) { g_S2NStage = S2N_FINISHED; return; }
@@ -1414,6 +1520,7 @@ void ConfirmarYColocarS2Nac(datetime time1, bool soloReconstruccion,
    double rangeSize = g_RangeHigh - g_RangeLow;
    double frac      = InpS2N_EntryLevelPct / 100.0;
    double minStop   = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * _Point;
+   double entBuf    = IndexPtsToPrice(InpEntryBufferPts);
    double slBuf     = IndexPtsToPrice(InpSLBufferPts);
    double entry75   = 0.0;
    double slPrice   = 0.0;
@@ -1426,12 +1533,21 @@ void ConfirmarYColocarS2Nac(datetime time1, bool soloReconstruccion,
      {
       oType   = ORDER_TYPE_BUY_STOP;
       entry75 = NormalizeDouble(g_RangeLow + rangeSize * frac, _Digits);
+      if(open930ExtremePrice > 0.0)
+         entry75 = MathMax(entry75, NormalizeDouble(open930ExtremePrice + entBuf, _Digits));
+
       double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
       if(!soloReconstruccion && ask >= entry75 - minStop)
         {
-         TraceEv("SKIP", "S2N", g_S2NDir, entry75, ask, 0, 0, "precio ya supero el 75%");
-         g_S2NStage = (ask >= g_RangeHigh) ? S2N_FINISHED : S2N_WAIT_BOS;
-         return;
+         double altEntry = NormalizeDouble(MathMax(iHigh(_Symbol, PERIOD_M5, 1), ask) + entBuf, _Digits);
+         if(altEntry <= g_RangeHigh + rangeSize * 0.10)
+            entry75 = altEntry;
+         else
+           {
+            TraceEv("SKIP", "S2N", g_S2NDir, entry75, ask, 0, 0, "precio ya supero el rango completo");
+            g_S2NStage = S2N_FINISHED;
+            return;
+           }
         }
 
       distPct = ((g_RangeLow - protExt) / g_RangeLow) * 100.0;
@@ -1457,12 +1573,21 @@ void ConfirmarYColocarS2Nac(datetime time1, bool soloReconstruccion,
      {
       oType   = ORDER_TYPE_SELL_STOP;
       entry75 = NormalizeDouble(g_RangeHigh - rangeSize * frac, _Digits);
+      if(open930ExtremePrice > 0.0)
+         entry75 = MathMin(entry75, NormalizeDouble(open930ExtremePrice - entBuf, _Digits));
+
       double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
       if(!soloReconstruccion && bid <= entry75 + minStop)
         {
-         TraceEv("SKIP", "S2N", g_S2NDir, entry75, bid, 0, 0, "precio ya supero el 75%");
-         g_S2NStage = (bid <= g_RangeLow) ? S2N_FINISHED : S2N_WAIT_BOS;
-         return;
+         double altEntry = NormalizeDouble(MathMin(iLow(_Symbol, PERIOD_M5, 1), bid) - entBuf, _Digits);
+         if(altEntry >= g_RangeLow - rangeSize * 0.10)
+            entry75 = altEntry;
+         else
+           {
+            TraceEv("SKIP", "S2N", g_S2NDir, entry75, bid, 0, 0, "precio ya supero el rango completo");
+            g_S2NStage = S2N_FINISHED;
+            return;
+           }
         }
 
       distPct = ((protExt - g_RangeHigh) / g_RangeHigh) * 100.0;
@@ -1507,30 +1632,31 @@ void ConfirmarYColocarS2Nac(datetime time1, bool soloReconstruccion,
       g_S2NStage        = S2N_ORDER_ACTIVE;
       g_S2NOrderInAsia  = inAsia;
       g_S2NPausedByNews = false;
+      g_S2NWaitOpen930  = false;
       GuardarMetadataGV(g_ActiveDayKey, MAGIC_S2_NAC, g_S2NInitRisk, g_S2NMaxRRReached, g_S2NSLType, g_S2NTradesToday, inAsia);
      }
   }
 
-bool EsVelaPullbackQe(int dir, double open1, double high1, double low1, double close1, double extreme)
+bool EsVelaPullbackQe(int dir, double open1, double high1, double low1, double close1, double prevExtreme)
   {
    if(InpQePBMode == PB_MODE_LEGACY)
-      return (dir == 1) ? (high1 <= extreme) : (low1 >= extreme);
+      return (dir == 1) ? (high1 <= prevExtreme) : (low1 >= prevExtreme);
 
-   // Fiel a la regla: vela contraria O detenimiento sin superar el extremo
+   // Fiel a la regla: vela contraria (incluso si dejó mecha superior/inferior) O detenimiento sin superar el extremo previo
    bool esContraria    = (dir == 1) ? (close1 < open1) : (close1 > open1);
-   bool esDetenimiento = (dir == 1) ? (high1 <= extreme && close1 <= extreme) : (low1 >= extreme && close1 >= extreme);
+   bool esDetenimiento = (dir == 1) ? (high1 <= prevExtreme) : (low1 >= prevExtreme);
    return (esContraria || esDetenimiento);
   }
 
 void ProcesarMotorQeVela(QeMachine &m, ulong magic, bool esContinuacion,
                          double open1, double high1, double low1, double close1, datetime time1,
-                         bool soloReconstruccion, bool puedeColocar,
+                         bool soloReconstruccion, bool puedeColocar, bool esperando930,
                          datetime nyTime, datetime nyAsiaStart, datetime srvSessEnd, datetime srvAsiaLastEntry)
   {
    if(m.stage == QE_ORDER_ACTIVE || m.stage == QE_IN_TRADE || m.stage == QE_FINISHED) return;
-   string prefix = esContinuacion ? "S2C" : "S1";
-   int reqPB     = MathMax(1, InpPullbackCandles);
-   double entBuf = IndexPtsToPrice(InpEntryBufferPts);
+   string prefix  = esContinuacion ? "S2C" : "S1";
+   int reqPB      = MathMax(1, InpPullbackCandles);
+   double entBuf  = IndexPtsToPrice(InpEntryBufferPts);
    bool allowDeep = esContinuacion ? InpS2C_AllowDeepPullback : InpS1_AllowDeepPullback;
 
    if(m.dir == 1)
@@ -1539,8 +1665,12 @@ void ProcesarMotorQeVela(QeMachine &m, ulong magic, bool esContinuacion,
 
       if(m.stage == QE_WAIT_1QE_PB)
         {
-         if(high1 > m.extreme) { m.extreme = high1; m.pbCount = 0; }
-         else if(EsVelaPullbackQe(1, open1, high1, low1, close1, m.extreme))
+         double prevExt = m.extreme;
+         if(high1 > m.extreme) m.extreme = high1;
+
+         if(high1 > prevExt && close1 > open1)
+            m.pbCount = 0;
+         else if(EsVelaPullbackQe(1, open1, high1, low1, close1, prevExt))
            {
             if(++m.pbCount >= reqPB)
               {
@@ -1551,12 +1681,21 @@ void ProcesarMotorQeVela(QeMachine &m, ulong magic, bool esContinuacion,
         }
       else if(m.stage == QE_WAIT_1QE_BRK)
         {
-         if(close1 > m.lvl1Qe && close1 > open1) { m.extreme = high1; m.pbCount = 0; m.stage = QE_WAIT_2QE_PB; }
+         if(close1 > m.lvl1Qe && close1 > open1)
+           {
+            m.extreme = high1; m.pbCount = 0; m.stage = QE_WAIT_2QE_PB;
+           }
+         else if(high1 > m.lvl1Qe)
+            m.lvl1Qe = high1;
         }
       else if(m.stage == QE_WAIT_2QE_PB)
         {
-         if(high1 > m.extreme) { m.extreme = high1; m.pbCount = 0; }
-         else if(EsVelaPullbackQe(1, open1, high1, low1, close1, m.extreme))
+         double prevExt = m.extreme;
+         if(high1 > m.extreme) m.extreme = high1;
+
+         if(high1 > prevExt && close1 > open1)
+            m.pbCount = 0;
+         else if(EsVelaPullbackQe(1, open1, high1, low1, close1, prevExt))
            {
             if(++m.pbCount >= reqPB)
               {
@@ -1565,7 +1704,8 @@ void ProcesarMotorQeVela(QeMachine &m, ulong magic, bool esContinuacion,
                if(InpDirect2QeEntry)
                  {
                   m.pendingEntry = NormalizeDouble(m.lvl2Qe + entBuf, _Digits);
-                  m.stage = QE_READY_ORDER;
+                  m.stage        = QE_READY_ORDER;
+                  m.waitOpen930  = esperando930;
                   if(puedeColocar && !soloReconstruccion)
                      ColocarOrdenMotorQe(m, magic, esContinuacion, ORDER_TYPE_BUY_STOP, m.pendingEntry, false, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
                  }
@@ -1579,11 +1719,14 @@ void ProcesarMotorQeVela(QeMachine &m, ulong magic, bool esContinuacion,
          if(close1 > m.lvl2Qe && close1 > open1)
            {
             m.pendingEntry = NormalizeDouble(high1 + entBuf, _Digits);
-            m.stage = QE_READY_ORDER;
+            m.stage        = QE_READY_ORDER;
+            m.waitOpen930  = esperando930;
             DibujarNivelEstructura("NOVA_" + prefix + "_PE_" + TimeToString(time1), time1, m.pendingEntry, prefix + " PE", clrForestGreen, true);
             if(puedeColocar && !soloReconstruccion)
                ColocarOrdenMotorQe(m, magic, esContinuacion, ORDER_TYPE_BUY_STOP, m.pendingEntry, false, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
            }
+         else if(high1 > m.lvl2Qe)
+            m.lvl2Qe = high1;
         }
      }
    else if(m.dir == -1)
@@ -1592,8 +1735,12 @@ void ProcesarMotorQeVela(QeMachine &m, ulong magic, bool esContinuacion,
 
       if(m.stage == QE_WAIT_1QE_PB)
         {
-         if(low1 < m.extreme) { m.extreme = low1; m.pbCount = 0; }
-         else if(EsVelaPullbackQe(-1, open1, high1, low1, close1, m.extreme))
+         double prevExt = m.extreme;
+         if(low1 < m.extreme) m.extreme = low1;
+
+         if(low1 < prevExt && close1 < open1)
+            m.pbCount = 0;
+         else if(EsVelaPullbackQe(-1, open1, high1, low1, close1, prevExt))
            {
             if(++m.pbCount >= reqPB)
               {
@@ -1604,12 +1751,21 @@ void ProcesarMotorQeVela(QeMachine &m, ulong magic, bool esContinuacion,
         }
       else if(m.stage == QE_WAIT_1QE_BRK)
         {
-         if(close1 < m.lvl1Qe && close1 < open1) { m.extreme = low1; m.pbCount = 0; m.stage = QE_WAIT_2QE_PB; }
+         if(close1 < m.lvl1Qe && close1 < open1)
+           {
+            m.extreme = low1; m.pbCount = 0; m.stage = QE_WAIT_2QE_PB;
+           }
+         else if(low1 < m.lvl1Qe)
+            m.lvl1Qe = low1;
         }
       else if(m.stage == QE_WAIT_2QE_PB)
         {
-         if(low1 < m.extreme) { m.extreme = low1; m.pbCount = 0; }
-         else if(EsVelaPullbackQe(-1, open1, high1, low1, close1, m.extreme))
+         double prevExt = m.extreme;
+         if(low1 < m.extreme) m.extreme = low1;
+
+         if(low1 < prevExt && close1 < open1)
+            m.pbCount = 0;
+         else if(EsVelaPullbackQe(-1, open1, high1, low1, close1, prevExt))
            {
             if(++m.pbCount >= reqPB)
               {
@@ -1618,7 +1774,8 @@ void ProcesarMotorQeVela(QeMachine &m, ulong magic, bool esContinuacion,
                if(InpDirect2QeEntry)
                  {
                   m.pendingEntry = NormalizeDouble(m.lvl2Qe - entBuf, _Digits);
-                  m.stage = QE_READY_ORDER;
+                  m.stage        = QE_READY_ORDER;
+                  m.waitOpen930  = esperando930;
                   if(puedeColocar && !soloReconstruccion)
                      ColocarOrdenMotorQe(m, magic, esContinuacion, ORDER_TYPE_SELL_STOP, m.pendingEntry, false, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
                  }
@@ -1632,44 +1789,69 @@ void ProcesarMotorQeVela(QeMachine &m, ulong magic, bool esContinuacion,
          if(close1 < m.lvl2Qe && close1 < open1)
            {
             m.pendingEntry = NormalizeDouble(low1 - entBuf, _Digits);
-            m.stage = QE_READY_ORDER;
+            m.stage        = QE_READY_ORDER;
+            m.waitOpen930  = esperando930;
             DibujarNivelEstructura("NOVA_" + prefix + "_PE_" + TimeToString(time1), time1, m.pendingEntry, prefix + " PE", clrFireBrick, false);
             if(puedeColocar && !soloReconstruccion)
                ColocarOrdenMotorQe(m, magic, esContinuacion, ORDER_TYPE_SELL_STOP, m.pendingEntry, false, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
            }
+         else if(low1 < m.lvl2Qe)
+            m.lvl2Qe = low1;
         }
      }
   }
 
-void IntentarArmarPendientesEnEspera(datetime srvTime, datetime nyTime, datetime nyLastEntry,
+void IntentarArmarPendientesEnEspera(datetime srvTime, datetime nyTime, datetime srvMarketOpen, datetime nyLastEntry,
                                       datetime nyAsiaStart, datetime nyAsiaLastEntry,
                                       datetime srvSessEnd, datetime srvAsiaLastEntry)
   {
-   bool enPre8AMPost = (nyTime < nyAsiaStart && !InpArmPre8AMTriggerAt8AM);
+   bool enPre8AMPost = (InpObserveFrom7AM && nyTime < nyAsiaStart && !InpArmPre8AMTriggerAt8AM);
+   double entBuf     = IndexPtsToPrice(InpEntryBufferPts);
+
+   // Obtener extremo de la vela de apertura 09:30 NY si una señal esperó su cierre
+   int shift930   = iBarShift(_Symbol, PERIOD_M5, srvMarketOpen, true);
+   double high930 = (shift930 >= 1) ? iHigh(_Symbol, PERIOD_M5, shift930) : iHigh(_Symbol, PERIOD_M5, 1);
+   double low930  = (shift930 >= 1) ? iLow(_Symbol, PERIOD_M5, shift930)  : iLow(_Symbol, PERIOD_M5, 1);
 
    if(InpEnableSetup1 && g_S1.stage == QE_READY_ORDER && g_S1.pendingEntry > 0.0)
      {
-      if(enPre8AMPost && !g_S1.pausedByNews) { g_S1.stage = QE_WAIT_2QE_BRK; }
+      if(enPre8AMPost && !g_S1.pausedByNews && !g_S1.waitOpen930) { g_S1.stage = InpDirect2QeEntry ? QE_WAIT_2QE_PB : QE_WAIT_2QE_BRK; }
       else
         {
+         if(g_S1.waitOpen930)
+           {
+            g_S1.pendingEntry = (g_S1.dir == 1) ? MathMax(g_S1.pendingEntry, NormalizeDouble(high930 + entBuf, _Digits)) :
+                                                  MathMin(g_S1.pendingEntry, NormalizeDouble(low930  - entBuf, _Digits));
+            g_S1.waitOpen930  = false;
+           }
          ENUM_ORDER_TYPE ot = (g_S1.dir == 1) ? ORDER_TYPE_BUY_STOP : ORDER_TYPE_SELL_STOP;
          ColocarOrdenMotorQe(g_S1, MAGIC_S1, false, ot, g_S1.pendingEntry, false, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
         }
      }
    if(InpEnableSetup2Cont && g_S2C.stage == QE_READY_ORDER && g_S2C.pendingEntry > 0.0)
      {
-      if(enPre8AMPost && !g_S2C.pausedByNews) { g_S2C.stage = QE_WAIT_2QE_BRK; }
+      if(enPre8AMPost && !g_S2C.pausedByNews && !g_S2C.waitOpen930) { g_S2C.stage = InpDirect2QeEntry ? QE_WAIT_2QE_PB : QE_WAIT_2QE_BRK; }
       else
         {
+         if(g_S2C.waitOpen930)
+           {
+            g_S2C.pendingEntry = (g_S2C.dir == 1) ? MathMax(g_S2C.pendingEntry, NormalizeDouble(high930 + entBuf, _Digits)) :
+                                                    MathMin(g_S2C.pendingEntry, NormalizeDouble(low930  - entBuf, _Digits));
+            g_S2C.waitOpen930  = false;
+           }
          ENUM_ORDER_TYPE ot = (g_S2C.dir == 1) ? ORDER_TYPE_BUY_STOP : ORDER_TYPE_SELL_STOP;
          ColocarOrdenMotorQe(g_S2C, MAGIC_S2_CONT, true, ot, g_S2C.pendingEntry, false, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
         }
      }
    if(InpEnableSetup2Nac && g_S2NStage == S2N_READY_ORDER)
      {
-      if(enPre8AMPost && !g_S2NPausedByNews) { g_S2NStage = S2N_WAIT_BOS; }
+      if(enPre8AMPost && !g_S2NPausedByNews && !g_S2NWaitOpen930) { g_S2NStage = S2N_WAIT_BOS; }
       else
-         ConfirmarYColocarS2Nac(iTime(_Symbol, PERIOD_M5, 1), false, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
+        {
+         double ref930 = g_S2NWaitOpen930 ? ((g_S2NDir == 1) ? high930 : low930) : 0.0;
+         g_S2NWaitOpen930 = false;
+         ConfirmarYColocarS2Nac(iTime(_Symbol, PERIOD_M5, 1), false, ref930, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
+        }
      }
   }
 
@@ -1736,6 +1918,7 @@ void ColocarOrdenMotorQe(QeMachine &m, ulong magic, bool esContinuacion, ENUM_OR
       m.stage        = QE_ORDER_ACTIVE;
       m.orderInAsia  = inAsia;
       m.pausedByNews = false;
+      m.waitOpen930  = false;
       GuardarMetadataGV(g_ActiveDayKey, magic, m.initRisk, m.maxRRReached, m.slType, m.tradesToday, inAsia);
      }
   }
@@ -1838,13 +2021,17 @@ void GestionarMotorQe(QeMachine &m, ulong magic, string setupName, datetime nyTi
    trade.SetExpertMagicNumber(magic);
 
    bool tienePendiente = false;
+   double closePrev = iClose(_Symbol, PERIOD_M5, 1);
    for(int i = OrdersTotal() - 1; i >= 0; i--)
      {
       ulong ticket = OrderGetTicket(i);
       if(OrderSelect(ticket) && OrderGetString(ORDER_SYMBOL) == _Symbol && (ulong)OrderGetInteger(ORDER_MAGIC) == magic)
         {
          tienePendiente = true;
-         if(ExpiroVentanaPendiente(nyTime, m.orderInAsia, nyLastEntry, nyAsiaStart, nyAsiaLastEntry))
+         bool invalidadoOpuesto = (m.dir == 1 && closePrev > 0.0 && closePrev < g_RangeLow) ||
+                                  (m.dir == -1 && closePrev > 0.0 && closePrev > g_RangeHigh);
+         bool expiro = ExpiroVentanaPendiente(nyTime, m.orderInAsia, nyLastEntry, nyAsiaStart, nyAsiaLastEntry);
+         if(expiro || invalidadoOpuesto)
            {
             trade.OrderDelete(ticket);
             tienePendiente = false;
@@ -1863,8 +2050,11 @@ void GestionarMotorQe(QeMachine &m, ulong magic, string setupName, datetime nyTi
          bool esNuevaPos = (m.stage != QE_IN_TRADE);
          if(esNuevaPos)
            {
-            m.stage = QE_IN_TRADE;
+            m.stage        = QE_IN_TRADE;
             m.tradesToday++;
+            m.graceDone    = false;
+            m.open930Done  = false;
+            m.maxRRReached = 0.0;
             if(m.initRisk <= 0.0)
               {
                ulong posId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
@@ -1872,28 +2062,54 @@ void GestionarMotorQe(QeMachine &m, ulong magic, string setupName, datetime nyTi
                                                             PositionGetDouble(POSITION_SL), g_ActiveDayKey, magic,
                                                             m.slType, m.maxRRReached, m.orderInAsia);
               }
+            TraceEv("FILL", setupName, m.dir, PositionGetDouble(POSITION_PRICE_OPEN), PositionGetDouble(POSITION_SL),
+                    PositionGetDouble(POSITION_TP), m.initRisk, "ticket=" + IntegerToString((long)ticket));
             GuardarMetadataGV(g_ActiveDayKey, magic, m.initRisk, m.maxRRReached, m.slType, m.tradesToday, m.orderInAsia);
            }
 
          bool cerraron = GestionarPosicionComun(ticket, magic, setupName, nyTime, srvTime,
-                                                m.initRisk, m.maxRRReached, m.open930Done, m.orderInAsia);
+                                                m.initRisk, m.maxRRReached, m.open930Done, m.graceDone, m.orderInAsia);
          if(cerraron)
            {
             bool puedeReentrar = (m.tradesToday < 2 &&
                                   ((!m.orderInAsia && nyTime <= nyLastEntry) || (m.orderInAsia && nyTime <= nyAsiaLastEntry)));
-            m.stage = puedeReentrar ? QE_WAIT_2QE_BRK : QE_FINISHED;
-            if(m.stage == QE_WAIT_2QE_BRK)
+            if(puedeReentrar)
               {
-               double c1 = iClose(_Symbol, PERIOD_M5, 1);
-               m.lvl2Qe = (m.dir == 1) ? MathMax(m.lvl2Qe, c1) : MathMin(m.lvl2Qe, c1);
+               if(InpDirect2QeEntry)
+                 {
+                  double recExt = m.lvl2Qe;
+                  if(m.dir == 1)
+                    {
+                     double hArr[];
+                     if(CopyHigh(_Symbol, PERIOD_M5, 1, 12, hArr) > 0)
+                        recExt = MathMax(recExt, hArr[ArrayMaximum(hArr)]);
+                    }
+                  else
+                    {
+                     double lArr[];
+                     if(CopyLow(_Symbol, PERIOD_M5, 1, 12, lArr) > 0)
+                        recExt = MathMin(recExt, lArr[ArrayMinimum(lArr)]);
+                    }
+                  m.extreme = recExt;
+                  m.pbCount = 0;
+                  m.stage   = QE_WAIT_2QE_PB;
+                 }
+               else
+                 {
+                  double c1 = iClose(_Symbol, PERIOD_M5, 1);
+                  m.lvl2Qe  = (m.dir == 1) ? MathMax(m.lvl2Qe, c1) : MathMin(m.lvl2Qe, c1);
+                  m.stage   = QE_WAIT_2QE_BRK;
+                 }
               }
+            else
+               m.stage = QE_FINISHED;
             continue;
            }
          GuardarMetadataGV(g_ActiveDayKey, magic, m.initRisk, m.maxRRReached, m.slType, m.tradesToday, m.orderInAsia);
         }
      }
 
-   if(!tienePosicion && !tienePendiente && !m.pausedByNews && (m.stage == QE_IN_TRADE || m.stage == QE_ORDER_ACTIVE))
+   if(!tienePosicion && !tienePendiente && !m.pausedByNews && !m.waitOpen930 && (m.stage == QE_IN_TRADE || m.stage == QE_ORDER_ACTIVE))
       m.stage = QE_FINISHED;
   }
 
@@ -1933,8 +2149,11 @@ void GestionarSetup2Nacimiento(datetime nyTime, datetime srvTime, datetime nyLas
          bool esNuevaPos = (g_S2NStage != S2N_IN_TRADE);
          if(esNuevaPos)
            {
-            g_S2NStage = S2N_IN_TRADE;
+            g_S2NStage        = S2N_IN_TRADE;
             g_S2NTradesToday++;
+            g_S2NGraceDone    = false;
+            g_S2NOpen930Done  = false;
+            g_S2NMaxRRReached = 0.0;
             if(g_S2NInitRisk <= 0.0)
               {
                ulong posId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
@@ -1942,11 +2161,13 @@ void GestionarSetup2Nacimiento(datetime nyTime, datetime srvTime, datetime nyLas
                                                                PositionGetDouble(POSITION_SL), g_ActiveDayKey, MAGIC_S2_NAC,
                                                                g_S2NSLType, g_S2NMaxRRReached, g_S2NOrderInAsia);
               }
+            TraceEv("FILL", "S2N", g_S2NDir, PositionGetDouble(POSITION_PRICE_OPEN), PositionGetDouble(POSITION_SL),
+                    PositionGetDouble(POSITION_TP), g_S2NInitRisk, "ticket=" + IntegerToString((long)ticket));
             GuardarMetadataGV(g_ActiveDayKey, MAGIC_S2_NAC, g_S2NInitRisk, g_S2NMaxRRReached, g_S2NSLType, g_S2NTradesToday, g_S2NOrderInAsia);
            }
 
          bool cerraron = GestionarPosicionComun(ticket, MAGIC_S2_NAC, "S2N", nyTime, srvTime,
-                                                g_S2NInitRisk, g_S2NMaxRRReached, g_S2NOpen930Done, g_S2NOrderInAsia);
+                                                g_S2NInitRisk, g_S2NMaxRRReached, g_S2NOpen930Done, g_S2NGraceDone, g_S2NOrderInAsia);
          if(cerraron)
            {
             g_S2NStage = S2N_FINISHED;
@@ -1956,12 +2177,12 @@ void GestionarSetup2Nacimiento(datetime nyTime, datetime srvTime, datetime nyLas
         }
      }
 
-   if(!tienePosicion && !tienePendiente && !g_S2NPausedByNews && (g_S2NStage == S2N_IN_TRADE || g_S2NStage == S2N_ORDER_ACTIVE))
+   if(!tienePosicion && !tienePendiente && !g_S2NPausedByNews && !g_S2NWaitOpen930 && (g_S2NStage == S2N_IN_TRADE || g_S2NStage == S2N_ORDER_ACTIVE))
       g_S2NStage = S2N_FINISHED;
   }
 
 bool GestionarPosicionComun(ulong ticket, ulong magic, string setupName, datetime nyTime, datetime srvTime,
-                            double initRisk, double &maxRRReached, bool &open930Done, bool inAsia)
+                            double initRisk, double &maxRRReached, bool &open930Done, bool &graceDone, bool inAsia)
   {
    if(!PositionSelectByTicket(ticket)) return false;
 
@@ -2009,7 +2230,7 @@ bool GestionarPosicionComun(ulong ticket, ulong magic, string setupName, datetim
      }
 
    // 2. Regla Cierre 15:40 NY (exclusiva de sesión NY, nunca en Asia)
-   if(InpExit_EndOfDay && InpClose1540Rule && !inAsia && minsNY >= minsClose15 && minsNY <= (minsClose15 + 15) && currentRR <= 0.10)
+   if(InpExit_EndOfDay && InpClose1540Rule && !inAsia && minsNY >= minsClose15 && minsNY <= (minsClose15 + 15) && currentRR <= 0.15)
      {
       if(bullfyOk && trade.PositionClose(ticket))
         {
@@ -2018,14 +2239,20 @@ bool GestionarPosicionComun(ulong ticket, ulong magic, string setupName, datetim
         }
      }
 
-   // 3. Regla Hora de Gracia (60 min sin momentum -> cerrar)
+   // 3. Regla Hora de Gracia: evaluar a los 60 min únicamente si aún NO hubo momentum (evita cerrar retrocesos horas después)
    int minsAbierto = (int)((srvTime - openTime) / 60);
-   if(InpExit_Grace && minsAbierto >= InpGracePeriodMins && currentRR < InpGraceMinRR)
+   if(InpExit_Grace && !graceDone && minsAbierto >= InpGracePeriodMins)
      {
-      if(bullfyOk && trade.PositionClose(ticket))
+      graceDone = true;
+      if(maxRRReached < InpTrail_Step1_TrigRR && currentRR < InpGraceMinRR)
         {
-         TraceEv("EXIT", setupName, dirPos, curPrice, openPrice, currentRR, (double)minsAbierto, "GRACE ticket=" + IntegerToString((long)ticket));
-         return true;
+         if(bullfyOk && trade.PositionClose(ticket))
+           {
+            TraceEv("EXIT", setupName, dirPos, curPrice, openPrice, currentRR, (double)minsAbierto, "GRACE ticket=" + IntegerToString((long)ticket));
+            return true;
+           }
+         else
+            graceDone = false;
         }
      }
 
@@ -2041,7 +2268,7 @@ bool GestionarPosicionComun(ulong ticket, ulong magic, string setupName, datetim
         }
      }
 
-   // 5. Trailing progresivo sin saltos de pisos + swings fractales reales
+   // 5. Trailing progresivo (+0.50->-0.25, +0.80->+0.50, +1.80->+1.15, >=+2.00 swings fractales reales)
    if(InpExit_Trailing && bullfyOk)
       AplicarTrailingProgresivo(ticket, posType, setupName, openPrice, curSL, curTP, initRisk, maxRRReached);
 
@@ -2058,11 +2285,23 @@ void AplicarTrailingProgresivo(ulong ticket, long posType, string setupName,
 
    if(InpTrailMode == TRAIL_NOVA_SWING)
      {
-      if(maxRRReached >= 1.18)      { floorSL = openPrice + dir * initRisk * 1.15; reason = setupName + "_RR1.18"; }
-      else if(maxRRReached >= 0.80) { floorSL = openPrice + dir * initRisk * 0.50; reason = setupName + "_RR0.80"; }
-      else if(maxRRReached >= 0.50) { floorSL = openPrice - dir * initRisk * 0.25; reason = setupName + "_RR0.50"; }
+      if(maxRRReached >= InpTrail_Step3_TrigRR)
+        {
+         floorSL = openPrice + dir * initRisk * InpTrail_Step3_SL_RR;
+         reason  = setupName + "_RR1.80";
+        }
+      else if(maxRRReached >= InpTrail_Step2_TrigRR)
+        {
+         floorSL = openPrice + dir * initRisk * InpTrail_Step2_SL_RR;
+         reason  = setupName + "_RR0.80";
+        }
+      else if(maxRRReached >= InpTrail_Step1_TrigRR)
+        {
+         floorSL = openPrice + dir * initRisk * InpTrail_Step1_SL_RR;
+         reason  = setupName + "_RR0.50";
+        }
 
-      if(maxRRReached >= 1.20)
+      if(maxRRReached >= InpTrail_SwingStartRR)
          usarSwing = true;
      }
    else // TRAIL_OPTIMIZED
@@ -2095,9 +2334,9 @@ void AplicarTrailingProgresivo(ulong ticket, long posType, string setupName,
 
 double ObtenerSwingEstructuralM5(long posType, int fractalBars, int lookbackBars)
   {
-   int fBars   = MathMax(1, fractalBars);
-   int lbBars  = MathMax(fBars * 2 + 3, lookbackBars);
-   double buf  = IndexPtsToPrice(InpSLBufferPts);
+   int fBars  = MathMax(1, fractalBars);
+   int lbBars = MathMax(fBars * 2 + 3, lookbackBars);
+   double buf = IndexPtsToPrice(InpSLBufferPts);
 
    if(posType == POSITION_TYPE_BUY)
      {
@@ -2111,13 +2350,12 @@ double ObtenerSwingEstructuralM5(long posType, int fractalBars, int lookbackBars
          bool esSwing = true;
          for(int k = 1; k <= fBars; k++)
            {
-            if(lows[i] > lows[i - k] || lows[i] >= lows[i + k]) { esSwing = false; break; }
+            if(lows[i] > lows[i - k] || lows[i] > lows[i + k]) { esSwing = false; break; }
            }
          if(esSwing)
             return NormalizeDouble(lows[i] - buf, _Digits);
         }
-      int fbCount = MathMin(copied, 6);
-      return NormalizeDouble(lows[ArrayMinimum(lows, 0, fbCount)] - buf, _Digits);
+      return 0.0; // Sin fallback de 6 velas brutas para no ahorcar impulsos verticales
      }
    else
      {
@@ -2131,13 +2369,12 @@ double ObtenerSwingEstructuralM5(long posType, int fractalBars, int lookbackBars
          bool esSwing = true;
          for(int k = 1; k <= fBars; k++)
            {
-            if(highs[i] < highs[i - k] || highs[i] <= highs[i + k]) { esSwing = false; break; }
+            if(highs[i] < highs[i - k] || highs[i] < highs[i + k]) { esSwing = false; break; }
            }
          if(esSwing)
             return NormalizeDouble(highs[i] + buf, _Digits);
         }
-      int fbCount = MathMin(copied, 6);
-      return NormalizeDouble(highs[ArrayMaximum(highs, 0, fbCount)] + buf, _Digits);
+      return 0.0; // Sin fallback de 6 velas brutas para no ahorcar impulsos verticales
      }
   }
 
@@ -2210,6 +2447,16 @@ void PausarPendientesPorBloqueo()
               }
            }
         }
+     }
+  }
+
+void CancelarPendientesPorMagic(ulong magic)
+  {
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = OrderGetTicket(i);
+      if(OrderSelect(ticket) && OrderGetString(ORDER_SYMBOL) == _Symbol && (ulong)OrderGetInteger(ORDER_MAGIC) == magic)
+         trade.OrderDelete(ticket);
      }
   }
 
@@ -2651,7 +2898,7 @@ void ActualizarHUD(datetime nyTime, string estado, color clrEstado)
                       DoubleToString(g_RangeHigh, _Digits) + " - " + DoubleToString(g_RangeLow, _Digits) + " (" + DoubleToString(g_RangePct, 2) + "%)" :
                       "Calculando...";
 
-   SetHudLine(0, x + 12, y + 10,  "NOVA BOT v3.00  |  NAS100 M5  |  NY Offset +" + IntegerToString(g_NYOffsetSec / 3600) + "h", clrGold, 9, true);
+   SetHudLine(0, x + 12, y + 10,  "NOVA BOT v3.10  |  NAS100 M5  |  NY Offset +" + IntegerToString(g_NYOffsetSec / 3600) + "h", clrGold, 9, true);
    SetHudLine(1, x + 12, y + 32,  "NY: " + TimeToString(nyTime, TIME_DATE|TIME_MINUTES) + " | " + TruncarTexto(estado, 36), clrEstado, 8, false);
    SetHudLine(2, x + 12, y + 50,  "Rango 02-07:  " + rangoTxt, clrWhite, 8, false);
    SetHudLine(3, x + 12, y + 68,  "Riesgo / Op:  " + DoubleToString(InpRiskPercent, 2) + "% ($" + DoubleToString(riesgoUSD, 2) + ")", clrSilver, 8, false);
