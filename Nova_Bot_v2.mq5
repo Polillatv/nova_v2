@@ -39,7 +39,6 @@ input bool   InpEnableSetup1         = true;            // Activar Setup 1 (Comp
 input bool   InpEnableSetup2Nac      = true;            // Activar Setup 2 Nacimiento (Compras y Ventas)
 input bool   InpEnableSetup2Cont     = true;            // Activar Setup 2 Continuación (Piramidación)
 input bool   InpEnableSetup3Filter   = true;            // Activar Filtro Setup 3 (Bloquear barrido bilateral)
-input bool   InpEnableSetup3Filter   = true;            // Activar Filtro Setup 3 (Bloquear barrido bilateral)
 input int    InpPullbackCandles      = 1;               // Velas contrarias/pausa para fijar 1Qe y 2Qe
 input bool   InpDirect2QeEntry       = true;            // Colocar Buy/Sell Stop directo en 2Qe
 input bool   InpS1_AllowDeepPullback = true;            // Permitir retroceso profundo antes de 1Qe en S1
@@ -880,9 +879,9 @@ void ColocarOrdenMotorQe(QeMachine &m, ulong magic, bool esContinuacion, ENUM_OR
       // Para Continuación, la regla oficial mide respecto al FINAL del rango (100% FINAL = g_RangeHigh en compras)
       // Para Setup 1, se mide respecto al 0% INICIO (g_RangeHigh en compras)
       distPct = ((entryPrice - g_RangeHigh) / g_RangeHigh) * 100.0;
-      if(distPct > InpCont_SL_AgresPct)       { slPrice = esContinuacion ? g_RangeHigh : g_RangeHigh; m.slType = "SL A"; }
+      if(distPct > InpCont_SL_AgresPct)       { slPrice = g_RangeHigh; m.slType = "SL A"; }
       else if(distPct >= InpCont_SL_ModMinPct){ slPrice = g_RangeMid;  m.slType = "SL M"; }
-      else                                   { slPrice = esContinuacion ? g_RangeLow : g_RangeLow;   m.slType = "SL C"; }
+      else                                    { slPrice = g_RangeLow;  m.slType = "SL C"; }
      }
    else
      {

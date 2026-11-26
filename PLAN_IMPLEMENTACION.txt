@@ -1,0 +1,769 @@
+================================================================================
+PLAN MAESTRO DE CORRECCIONES Y MEJORAS - PROYECTO NOVA BOT (NAS100 M5 / BULLFY)
+================================================================================
+Fecha de diagnostico    : 2026-11-26
+Fecha de implementacion : 2026-11-26
+Estado actual           : FASES 1 A 5 IMPLEMENTADAS (pendiente compilar en MT5)
+Workspace base          : C:\Users\Diego\Documents\nova_v2-mod\nova_v2-mod
+Objetivo                : Corregir todos los errores criticos de compilacion,
+                          cumplimiento Prop Firm (Bullfy Ltd.), logica operativa,
+                          fidelidad a la estrategia Nova, rendimiento y documentacion,
+                          consolidando una unica base productiva verificable.
+
+================================================================================
+0. ESTRATEGIA DE CONSOLIDACION Y ARQUITECTURA OBJETIVO
+================================================================================
+Problema actual:
+- Coexisten 3 archivos .mq5 desincronizados:
+  1) Nova_Bot_v2.mq5: no compila (input duplicado) y omite Setup 3, regla 15:40,
+     regla 09:30 y gracia en Setup 2 Nacimiento.
+  2) Nova_Bot_v2_1_Clone.mq5: internamente es "Nova_Bot_v2_3_Clone.mq5" (v2.30).
+     Es la base funcional mas completa, pero tiene bugs de Bullfy, DST, Asia,
+     ventana 07:00-08:00 NY, reinicio de initRisk y simplificaciones de setups.
+  3) Ejemplo de estructura\Nova_Bot_v1.mq5: internamente es "v3.11", una rama
+     de ablacion con todas las salidas desactivadas por defecto (false).
+
+Decision de arquitectura:
+- Tomar Nova_Bot_v2_1_Clone.mq5 como base de partida y evolucionarla hacia una
+  unica version productiva limpia (ej. Nova_Bot_v3.mq5 o actualizar y renombrar
+  coherentemente Nova_Bot_v2_3.mq5), manteniendo flags configurables de ablacion
+  (como en v3.11) pero con sus valores por defecto ACTIVADOS (true) para
+  produccion.
+- Reparar Nova_Bot_v2.mq5 (quitar linea duplicada si se conserva como respaldo)
+  o mover versiones historicas (v1, v2) a una carpeta `Archivo_Historico/` para
+  evitar confusiones y binarios .ex5 obsoletos en la raiz.
+- Dejar un unico archivo de configuracion de compilacion/git correcto.
+
+================================================================================
+FASE 1: HIGIENE DEL REPOSITORIO, COMPILACION Y VERSIONADO (P0)
+================================================================================
+
+1.1. Corregir .gitignore e inicializar control de versiones
+- Archivo: .gitignore
+- Error actual: Contiene un bloque JSON de VS Code ("includePath": [...] con ruta
+  hardcodeada a C:\Users\mia\...).
+- Accion:
+  a) Reemplazar .gitignore por reglas reales para MQL5/VSCode:
+     - .vscode/
+     - *.ex5
+     - *.log
+     - *.csv
+     - Tester/
+  b) Opcional: crear .vscode\c_cpp_properties.json (ignorado por git) si se usa
+     VS Code para IntelliSense MQL5.
+  c) Inicializar repositorio Git (`git init`) en la raiz del proyecto para
+     tener trazabilidad de cambios y poder comparar cada fase en Strategy Tester.
+  d) Evaluar aplanar la carpeta duplicada `nova_v2-mod\nova_v2-mod\` si no rompe
+     rutas locales del usuario.
+
+1.2. Corregir error de compilacion inmediato y sincronizar nombres/versiones
+- Archivo: Nova_Bot_v2.mq5 (lineas 41-42)
+- Accion:
+  a) Eliminar la declaracion duplicada de `input bool InpEnableSetup3Filter = true;`.
+  b) Eliminar la expresion ternaria redundante en `ColocarOrdenMotorQe`
+     (lineas 883 y 885: `esContinuacion ? g_RangeHigh : g_RangeHigh`).
+  c) Sincronizar `#property version`, cabecera, `Print(...)` de `OnInit()`,
+     prefijo de `g_TraceFile` y titulo del HUD con el nombre real del archivo
+     destino (y recompilar todos los .ex5 para eliminar binarios desfasados).
+  d) Eliminar el input muerto `InpUseOptimizedTrail` o conectarlo explicitamente
+     al motor de trailing (ver Fase 4.5).
+
+================================================================================
+FASE 2: CUMPLIMIENTO ESTRICTO BULLFY LTD. Y GESTION DE RIESGO (P0)
+================================================================================
+Referencia obligatoria: Bullfy\bullfy.txt (Clausula 12.2 / Articulo 01 y Art. 14).
+Regla clave: En ventana [T-5m, T+5m] de noticia roja Forex Factory en divisa
+afectada:
+- NO se puede abrir ninguna posicion (excepcion: activacion de orden pendiente
+  colocada ANTES de la ventana).
+- SOLO se puede cerrar una posicion si tiene antiguedad >= 60 minutos completos
+  en perdida neta, O >= 24 horas completas en beneficio neto o cero.
+- Primera infraccion = eliminacion inmediata de la cuenta.
+
+2.1. Blindar cierres y modificaciones durante noticias rojas (Art. 01 Bullfy)
+- Afecta: `OnTick()`, `GestionarMotorQe()`, `GestionarSetup2Nacimiento()`,
+  `MoverSLSeguro()`.
+- Error actual: Cuando `bloqueadoPorNoticia == true`, `OnTick` borra todas las
+  pendientes (destruyendo el estado del dia) pero SIGUE ejecutando las reglas de
+  cierre (09:30, 15:40, Hora de gracia) y trailing sobre posiciones abiertas.
+- Implementacion:
+  a) Crear helper `bool PuedeCerrarPosicionPorBullfy(ulong ticket, datetime srvTime)`:
+     - Selecciona la posicion por `ticket`.
+     - Calcula `antiguedadSeg = srvTime - (datetime)PositionGetInteger(POSITION_TIME)`.
+     - Calcula PnL neto actual: `POSITION_PROFIT + POSITION_SWAP` (y estimar
+       comision si aplica, o usar margen de seguridad de comision).
+     - Si `EstaBloqueadoPorNoticias(nyTime)` es true (o estamos a <= 30s de entrar
+       en la ventana para evitar latencia de ejecucion):
+       * Si `pnlNeto < 0`: solo devuelve `true` si `antiguedadSeg >= 3600` (60 min
+         completos; usar buffer conservador ej. 3660s).
+       * Si `pnlNeto >= 0`: solo devuelve `true` si `antiguedadSeg >= 86400`
+         (24 horas completas; usar buffer 86460s).
+     - Si la ventana esta restringida y no cumple antiguedad, devuelve `false`.
+  b) En `GestionarMotorQe` y `GestionarSetup2Nacimiento`:
+     - Antes de CUALQUIER `trade.PositionClose(ticket)` (Gracia, 09:30, 15:40,
+       Judas o FOMC), verificar `PuedeCerrarPosicionPorBullfy(ticket, srvTime)`.
+     - Tambien bloquear `MoverSLSeguro()` dentro de la ventana de noticia roja
+       (y 1 minuto antes) para evitar acercar el SL tan pegado al precio que
+       provoque un cierre inducido dentro de los 5 minutos restringidos; el SL
+       colocado antes de la noticia actua como proteccion pasiva.
+  c) Cambiar politica de ordenes pendientes en noticias (`input enum` opcional):
+     - Opcion A (Conservadora, recomendada): Si se desea cancelar pendientes
+       antes de la noticia (`T - InpNewsMinsBefore - 1 min`), NO dejar que
+       `GestionarMotorQe` / `GestionarSetup2Nacimiento` pasen `stage` a
+       `*_FINISHED`. Crear un estado/bandera `pausedByNews` (o regresar
+       `QE_WAIT_2QE_BRK` / `S2N_WAIT_CH_CONFIRM`) para poder reevaluar o rearmar
+       post-noticia si la estructura sigue valida.
+     - Opcion B (Permitida por Bullfy Art. 01): Mantener pendientes ya colocadas
+       con anterioridad y unicamente prohibir colocar NUEVAS ordenes durante la
+       ventana (y si se cancelan pendientes manualmente, hacerlo al menos
+       1-2 minutos antes de `T-5m` por seguridad de reloj/latencia).
+
+2.2. Robustecer descarga y parseo del calendario de noticias
+- Afecta: `ActualizarCalendarioNoticias()`, `ParseFFDateTime()`, `ExtractTag()`,
+  `EstaBloqueadoPorNoticias()`.
+- Errores actuales: No verifica HTTP 200 (vacia `g_NewsList` si Forex Factory
+  devuelve HTTP 429/503), reintenta cada tick con timeout 5s si falla, acepta
+  `<country>` vacio via `StringFind(InpNewsCurrency, "") >= 0`, descarta eventos
+  `"All Day"` / `"Tentative"`, y nunca rellena `g_NewsList[idx].currency`.
+- Implementacion:
+  a) Agregar `datetime g_LastNewsAttempt = 0;` y cooldown de reintento ante
+     error (ej. `120` segundos) para no congelar `OnTick()`.
+  b) Validar el codigo de retorno HTTP: `if(res != 200)`:
+     - NO vaciar `g_NewsList` existente (conservar la cache previa valida).
+     - Actualizar `g_NewsStatus = "Error HTTP " + IntegerToString(res) + " (usando cache)"`.
+     - Salir sin pisar `g_LastNewsFetch`.
+  c) Validar que `xml` contenga `<weeklyevents>` o al menos un `<event>` valido
+     antes de limpiar `g_NewsList` (construir array temporal y solo reemplazar
+     `g_NewsList` si el parseo fue integro).
+  d) Corregir filtro de divisa:
+     - Extraer `string ctry = ExtractTag(block, "country");`
+     - Normalizar mayusculas y trim (`StringToUpper`, `StringTrimLeft/Right`).
+     - Soportar lista separada por comas en `InpNewsCurrency` (ej. `"USD,ALL"`)
+       y rechazar si `ctry == ""`.
+     - Guardar `g_NewsList[idx].currency = ctry;`.
+  e) Manejar `"Tentative"` / `"All Day"` (loggear advertencia en HUD/Trace si
+     son High Impact USD, sin romper el parser).
+  f) Rate limit de Forex Factory (maximo 2 requests / 5 min): mantener intervalo
+     normal de `1800` s (30 min) o `3600` s y cache local opcional en
+     `Common\Files` por si se reinicia el terminal multiples veces.
+
+2.3. Implementar regla oficial FOMC (1 hora y 30 minutos antes)
+- Referencia: ESTRATEGIA_SETUP1.md, setup2_nacimiento.md, setup2_continuacion.md.
+- Regla: "FOMC: Operar unicamente si el Setup se da temprano y estar fuera del
+  mercado como maximo 1 hora y 30 minutos antes del anuncio."
+- Implementacion:
+  a) Agregar inputs:
+     - `input bool InpUseFOMCRule = true;`
+     - `input int  InpFOMCExitMinsBefore = 90;`
+     - `input int  InpFOMCResumeMinsAfter = 30;` (o bloquear el resto del dia)
+  b) En `NewsEvent`, agregar `bool isFOMC;`. Al parsear `<title>`, detectar
+     subcadenas `"FOMC"` (ej. `"FOMC Statement"`, `"FOMC Press Conference"`,
+     `"Federal Funds Rate"` / `"FOMC Meeting"`).
+  c) Cuando haya evento FOMC hoy:
+     - Si `nyTime >= fomcTime - InpFOMCExitMinsBefore * 60`:
+       * Bloquear nuevas entradas (y cancelar pendientes antes de entrar en la
+         ventana Bullfy de 5 min).
+       * Cerrar posiciones abiertas antes de que falten 90 min (verificando
+         `PuedeCerrarPosicionPorBullfy` por si hubiera otra noticia roja cerca).
+       * Mostrar aviso visible en HUD: `"FOMC EN X MIN - FUERA DE MERCADO"`.
+
+2.4. Guardia de Drawdown Diario / Total Bullfy y correccion de `CalcularLotajePorRiesgo`
+- Afecta: `CalcularLotajePorRiesgo()`, `OnTick()`.
+- Implementacion:
+  a) Guardar `g_DayStartBalance` y `g_DayStartEquity` al cambiar `g_ActiveDayKey`.
+     Agregar input opcional `input double InpMaxDailyLossPct = 3.5;` (margen
+     preventivo debajo del limite tipico de prop firm): si la perdida realizada +
+     flotante del dia alcanza el umbral, bloquear nuevas ordenes y cancelar
+     pendientes del dia.
+  b) En `CalcularLotajePorRiesgo()`:
+     - Calcular dinamicamente los decimales del lote a partir de `stepLot`
+       (`int volDigits = (int)MathMax(0, MathRound(-MathLog10(stepLot)));`)
+       en lugar de `NormalizeDouble(..., 2)`.
+     - Si `lotesCrudos < minLot`:
+       * Calcular riesgo real con `minLot`: `realRiskPct = (minLot * valorPorLote / balance) * 100.0`.
+       * Agregar `input bool InpSkipIfMinLotExceedsRisk = true;` y
+         `input double InpMaxAllowedRiskPct = 0.75;`. Si excede el maximo
+         permitido, registrar `SKIP` en traza y abortar orden (retornar `0.0`),
+         en vez de sobre-apalancar la cuenta silenciosamente.
+     - Validar margen libre antes de enviar la orden con `OrderCalcMargin(...)`
+       comparado contra `AccountInfoDouble(ACCOUNT_MARGIN_FREE)`.
+
+================================================================================
+FASE 3: MOTOR DE TIEMPO, DST, RECONSTRUCCION Y SESION ASIA (P0/P1)
+================================================================================
+
+3.1. Calculo dinamico de DST (Horario de Verano NY vs Broker)
+- Problema actual: `InpServerOffsetFromNY = 7` es estatico. Entre el 2do domingo
+  de marzo y el ultimo domingo de marzo (y entre el ultimo domingo de octubre y
+  el 1er domingo de noviembre), Pepperstone (EET/EEST) y NY (EST/EDT) tienen
+  offset de 6 horas, no 7.
+- Implementacion:
+  a) Agregar modo automatico de offset:
+     - `input bool InpAutoDST = true;`
+     - `input int  InpBrokerWinterOffsetUTC = 2;` (Pepperstone invierno = UTC+2)
+     - `input bool InpBrokerUsesEUDST = true;` (ultimo dom mar / ultimo dom oct)
+     - `input int  InpServerOffsetFromNY = 7;` (usado como fallback si `InpAutoDST == false`)
+  b) Implementar funcion `int CalcularOffsetNYSegundos(datetime srvTime)`:
+     - Convierte `srvTime` a UTC aproximado usando la regla EET/EEST (o fija).
+     - Calcula si la fecha corresponde a EDT (UTC-4: desde el 2do domingo de
+       marzo 02:00 EST hasta el 1er domingo de noviembre 02:00 EDT) o EST (UTC-5).
+     - Devuelve `(brokerOffsetUTC - nyOffsetUTC) * 3600`.
+  c) Recalcular `g_NYOffsetSec` en `OnTick()` al cambiar de dia (o cada barra M5)
+     y mostrar el offset activo en el HUD (`NY Offset: +7h` o `+6h`).
+
+3.2. Desacoplar observacion estructural (desde 07:00 NY) de ventana de ordenes (08:00 NY)
+- Problema actual: `EvaluarVela()` solo corre dentro de `EstaEnVentanaEntradas()`
+  (`>= 08:00 NY`). Todo `1QR`, `X`, `CH` o barrido `Setup 3` entre `07:00` y
+  `08:00 NY` se pierde.
+- Implementacion:
+  a) Separar las responsabilidades de `EvaluarVela()` (o pasar un parametro
+     `bool permitirColocarOrdenes`):
+     - **A partir de `nyRangeEnd` (`07:00 NY`)**: evaluar estructura de velas M5
+       (`EvaluarFiltroSetup3`, registro de `g_HadSideBreakout`, deteccion de
+       `1QR`, seguimiento de `1Qe` / `2Qe` / `CH` / `X`).
+     - **Solo dentro de `EstaEnVentanaEntradas()` (`08:00-15:00 NY` o Asia
+       `18:00-21:30 NY`) y sin bloqueo de noticias/Setup3**: permitir enviar
+       ordenes pendientes al broker (`OrderOpen`).
+     - Caso borde `07:00-08:00 NY`: si la estructura completa el gatillo ANTES de
+       las `08:00 NY`, definir claramente via input
+       `input bool InpArmPre8AMTriggerAt8AM = true;` si a las `08:00 NY` se
+       coloca la pendiente (si el precio aun no invalido/activo el nivel) o si
+       requiere un nuevo quiebre dentro de sesion.
+  b) En `ReconstruirEstructuraHoy()`, cambiar el inicio de `srvSessStart` (`08:00`)
+     a `srvRangeEnd` (`07:00 NY`)!
+
+3.3. Reparar persistencia y reconstruccion de estado ante reinicios (`initRisk` y `tradesToday`)
+- Problema actual: Si el EA se reinicia o se cambia el timeframe con una posicion
+  abierta, `m.initRisk` y `g_S2NInitRisk` quedan en `0.0` (causando cierres
+  prematuros por Gracia/15:40/09:30 al dar `currentRR == 0.0`), y si ya hubo
+  un trade cerrado hoy, `ReconstruirEstructuraHoy()` vuelve a abrir otro.
+- Implementacion:
+  a) **Persistir metadata por trade usando `GlobalVariable` de terminal** (o
+     codificada en el comentario de la orden si no excede 31 chars, combinando
+     ambas):
+     - Key por dia/ticket/magic: ej. `NOVA_<Symbol>_<dayKey>_<magic>_RISK`,
+       `..._SLTYPE`, `..._TRADES`, `..._S3`, etc. (solo en modo live, o
+       `!MQLInfoInteger(MQL_TESTER)`).
+     - Limpiar `GlobalVariable` de dias anteriores al iniciar nuevo `dayKey`.
+  b) **Recuperacion desde historial del dia (`SincronizarConHistorialHoy`)**:
+     - Al arrancar o cambiar de dia en live: ejecutar `HistorySelect(srvRangeStart, TimeCurrent())`.
+     - Contar trades reales ejecutados hoy por `magic` (`DEAL_ENTRY_IN`) para
+       poblar `g_S1.tradesToday`, `g_S2C.tradesToday` y un nuevo `g_S2NTradesToday`.
+     - Si hay posicion abierta hoy para `magic`:
+       1) Buscar `initRisk` primero en `GlobalVariable` por ticket de posicion /
+          orden origen.
+       2) Si no existe `GlobalVariable`, buscar la orden historica original en
+          `HistoryOrderSelect(posIdentifier)` y leer `ORDER_SL` inicial (o el
+          `DEAL_SL` del deal de entrada `DEAL_ENTRY_IN`), calculando
+          `initRisk = MathAbs(openPrice - initSL)`.
+       3) Como ultimo fallback, usar `MathAbs(openPrice - curSL)` si `curSL > 0`.
+       4) Marcar `stage = QE_IN_TRADE` / `S2N_IN_TRADE` para que NUNCA vuelva a
+          `QE_WAIT_2QE_BRK` ni duplique entradas ni tenga `currentRR == 0.0` falso.
+     - Si ya hubo trade cerrado hoy y se alcanzo el cupo maximo diario de ese
+       setup (`tradesToday >= maxTrades`), marcar `stage = *_FINISHED` directo.
+  c) En `ReconstruirEstructuraHoy()`, guardar `g_LastBarTime = iTime(_Symbol, PERIOD_M5, 0)`
+     para no reevaluar la vela actual dos veces y no llamar `EvaluarVela` pasado
+     el limite horario.
+
+3.4. Reparar completamente la Sesion Asia (`18:00 - 21:30 NY`)
+- Errores actuales: `nyTime > nyLastEntry` (`15:00 NY`) borra inmediatamente las
+  ordenes de Asia; `minsNY >= 15:40` las cierra por EOD; `stage` queda en
+  `*_FINISHED` tras NY.
+- Implementacion:
+  a) Definir dos sub-ventanas independientes en `ConstruirHorariosDia`:
+     - Ventana NY: `08:00` a `InpLastEntryHourNY:InpLastEntryMinNY` (`15:00`),
+       gestion hasta `15:45 NY`.
+     - Ventana Asia: `18:00` a `21:30 NY` (parametrizables: `InpAsiaStartHour/Min`,
+       `InpAsiaEndHour/Min`, `InpAsiaManageEndHour/Min` ej. `23:55` o sesion).
+  b) Separar expiracion de pendientes por sesion:
+     - Si la orden pertenece a sesion NY (`nyTime <= nyLastEntry`), expira al
+       pasar `nyLastEntry` (`15:00 NY`).
+     - Si `InpEnableAsiaSession == true`, al entrar a las `18:00 NY`:
+       * Solo reactivar busqueda para setups que NO agotaron su cupo o bajo
+         regla explicita `input bool InpAsiaAllowIfNYTraded = false;` ("sumarse
+         a la expectativa de Setup prevista en NY que por horario no se pudo
+         operar").
+       * Mantener exactamente el mismo rango `02:00 - 07:00 NY`.
+       * Las ordenes colocadas en Asia expiran al pasar `nyAsiaLastEntry`
+         (`21:30 NY`), NO contra `15:00 NY`.
+       * Usar `ORDER_TIME_SPECIFIED` con `expiration = srvWindowEnd` en lugar de
+         `ORDER_TIME_DAY` (evita expiracion anticipada a medianoche servidor = `17:00 NY`).
+  c) Restringir `InpClose1540Rule` a la ventana de cierre NY (`minsNY >= 15*60+40 && minsNY <= 15*60+55`),
+     de modo que nunca cierre un trade abierto en Asia (`>= 18:00 NY`).
+  d) Permitir opcion especifica de gestion Asia (reglamento: *"Es a favor de
+     sostener el StopLoss; aplica la misma hora de gracia; domingos mejores"*),
+     incluyendo opcion de solo trailing/gracia sin cierre temprano.
+  e) Manejar domingo (`dtNy.day_of_week == 0`): si en domingo a las `18:00 NY` no
+     hubo rango `02:00-07:00 NY` propio (mercado cerrado hasta 18:00 NY),
+     documentar/decidir si el rango de sesion domingo usa el rango del viernes
+     previo o si se omite hasta el lunes (verificacion requerida en el broker).
+
+================================================================================
+FASE 4: FIDELIDAD REAL A LA ESTRATEGIA NOVA (SETUPS 1, 2N, 2C, 3 Y TRAILING) (P1)
+================================================================================
+
+4.1. Refinar Setup 2 Nacimiento (`ProcesarSetup2NacimientoVela` y `ConfirmarYColocarS2Nac`)
+- Referencia: `setup2_nacimiento.md`, `8.png`, `9.png`, `13.png`, `Captura 131534.png`,
+  `Captura 131701.png`.
+- Errores actuales: No verifica reaccion al `50%` ni `BOS`, fija `CH` con cualquier
+  vela contraria, dispara incluso con `close1 > g_RangeMid` directo, y pone
+  `SL A` en `0% INICIO` (demasiado ajustado vs capturas).
+- Implementacion:
+  a) Maquina de estados explicita para Setup 2 Nacimiento:
+     1. `S2N_WAIT_1QR`: Barrido/absorcion >= `InpS2N_1QR_Pct` (`0.05%`) del `0% INICIO`
+        (con o sin cuerpo). Registra el extremo `g_S2NExtreme` y el primer punto
+        pivote `X` (`g_S2NXLevel`).
+     2. `S2N_WAIT_CH`: Tras formar el barrido/pivote `X`, el precio debe girar
+        en direccion contraria y realizar un **Change of Character (`CH`)**
+        rompiendo con cuerpo/cierre el pivote interno previo hacia el rango,
+        quedando fijado el extremo protegido del `CH` (`g_S2NProtectedExtreme`).
+     3. `S2N_WAIT_50_BOS`: El precio entra hacia el rango, alcanza/reacciona cerca
+        del `50%` (`g_RangeMid`, con tolerancia parametrizable ej. alcanzar `>= 40%-50%`)
+        formando un swing de retroceso y luego hace **Break of Structure (`BOS`)**
+        superando el nuevo maximo (compras) / minimo (ventas) previo al `75%`.
+        * Mantener un input `input bool InpS2N_Strict50BOS = true;` para poder
+          hacer backtest A/B contra el modo simplificado actual (`false`).
+     4. `S2N_ORDER_ACTIVE`: Colocar `BUY_STOP` / `SELL_STOP` en el nivel `75%`
+        (`InpS2N_EntryLevelPct`), o si `Ask/Bid` ya supero `75%` al confirmarse el
+        BOS, evaluar entrada opcional en el extremo de la vela de confirmacion o
+        `SKIP` parametrizable (en vez de matar todo el dia al primer `SKIP`).
+  b) Corregir calculo de SL en S2N segun las laminas `8.png`, `9.png`, `13.png`
+     y `Captura 131701.png`:
+     - Medir `distPct` entre `0% INICIO` (`Low` en compras / `High` en ventas) y
+       el extremo protegido del `CH` (`g_S2NProtectedExtreme`).
+     - `distPct < 0.15%` (`SL C`): Cubrir el alto/bajo protegido del `CH` +
+       margen en puntos (`InpSLBufferPoints`, ej. `50-100` puntos / `5-10` pts indice,
+       NO `_Point * 10` fijo).
+     - `0.15% <= distPct <= 0.25%` (`SL M`): Cubrir alto/bajo interno posterior
+       al extremo del `CH` (por ejemplo, pivote `X` o vela/mecha interna entre
+       `0% INICIO` y el extremo del `CH`).
+     - `distPct > 0.25%` (`SL A`): Colocar SL en zona agresiva cubriendo el
+       pivote interno/`X` o un porcentaje configurable del barrido externo al
+       `0% INICIO` (ej. 35%-50% de la distancia `0% INICIO <-> Extremo CH`,
+       coherentemente con `8.png`, `9.png` y `Captura 131701.png` donde el SL A
+       queda por fuera del `0% INICIO`, nunca pegado exactamente al borde).
+  c) Agregar contador `g_S2NTradesToday` (max 1 trade por defecto o configurable)
+     para evitar multiples disparos si una pendiente se invalida y se rezaga.
+
+4.2. Refinar Motor Qe (Setup 1 y Setup 2 Continuacion)
+- Referencia: `ESTRATEGIA_SETUP1.md`, `setup2_continuacion.md`, `4.png`, `5.png`,
+  `8.png`, `12.png`, `13.png`, `18.png`.
+- Implementacion:
+  a) **Deteccion fiel de `Qe` (2 retrocesos de velas contrarias o 2 detenimientos):**
+     - Agregar `input enum ENUM_QE_PB_MODE`:
+       * `PB_MODE_COUNTER_OR_PAUSE` (Fiel a la regla Nova: un retroceso valido
+         se fija cuando aparecen `N` velas contrarias consecutivas --ej. 2 velas
+         bajistas en compra-- O `N` velas de detenimiento/pausa sin superar el
+         extremo actual, parametrizando `InpCounterCandles = 2` e
+         `InpPauseCandles = 2`).
+       * `PB_MODE_LEGACY` (conteo actual `InpPullbackCandles` para comparar en backtest).
+  b) **Confirmacion Premium real en `2Qe`:**
+     - Revisar default de `InpDirect2QeEntry`: en la estrategia oficial ("Confirmacion
+       Premium: espero que la vela del 2Qe cierre con cuerpo de vela y cargo orden
+       Stop por debajo o encima de la misma"), el comportamiento fiel es
+       `InpDirect2QeEntry = false` (esperar cierre con cuerpo rompiendo `lvl2Qe` y
+       colocar la orden Stop en `high1 + buffer` / `low1 - buffer`), manteniendo el
+       booleano para comparacion A/B.
+  c) **Buffer de entrada y SL adaptado al simbolo (`NAS100`):**
+     - Reemplazar `_Point * 10` hardcoded (que vale solo `0.1` o `1.0` punto segun
+       `_Digits = 2` o `1`) por un helper `double IndexPointsToPrice(double pts)`
+       o `InpEntryBufferPts = 2.0` (en puntos enteros del indice, independiente de
+       `_Digits`) + verificacion del spread actual (`Ask - Bid`).
+  d) **Separar `S1` de `S2C` en `InpS1_AllowDeepPullback`:**
+     - Aplicar el filtro de invalidacion por retroceso profundo solo a `S1` (o crear
+       `InpS2C_AllowDeepPullback` independiente), y usar el nivel logico de SL
+       correspondiente si se desea invalidar antes de la entrada.
+  e) **Validacion opcional de estructura previa para Setup 2 Continuacion:**
+     - Agregar `input bool InpS2C_RequireS2NStructure = false;` (o `true` tras
+       validar en backtest): si es `true`, exigir que del lado inicial no solo
+       haya habido un toque `>= 0.05%`, sino al menos un `CH` o rechazo previo al
+       cruce del rango (`2QR >= 0.15%`), evitando activar Continuacion tras una
+       unica vela gigante unidireccional.
+  f) **Reentrada segura tras Hora de Gracia o `09:30`:**
+     - Cuando Grace o `09:30` cierra el primer trade y devuelve `m.stage = QE_WAIT_2QE_BRK`,
+       exigir que el precio realice un nuevo pullback/detenimiento o un nuevo
+       cierre por encima/debajo de `MathMax(m.lvl2Qe, close_al_cerrar)` para no
+       reentrar inmediatamente en la siguiente vela si el precio ya estaba por
+       encima de `lvl2Qe` al cerrar por falta de momentum.
+
+4.3. Refinar Filtro Setup 3 No Operable (`EvaluarFiltroSetup3`)
+- Referencia: `setup3_no_operable.md`, `20.png`, `21.png`.
+- Errores actuales: umbral `0` fuera del rango (1 tick ya cuenta como salida),
+  orden fijo intrabar si una vela toca ambos lados, bloqueo en una sola vela
+  roja/verde aunque sea mero retroceso dentro del rango.
+- Implementacion:
+  a) Agregar umbral minimo configurable para considerar `"SALE POR UN LADO"` y
+     `"SALE POR EL OTRO"`:
+     - `input double InpS3_MinOutPct = 0.05;` (coherente con 1QR minimo).
+     - `input bool   InpS3_RequireBodyBreak = false;` (opcion cuerpo vs mecha).
+  b) Manejar el caso de una unica vela que toca ambos lados (`high1 > outHigh &&
+     low1 < outLow`): inferir cual extremo se rompio primero segun `open1`/`close1`
+     o consultar sub-velas M1 (`CopyHigh`/`CopyLow` en `PERIOD_M1`) para saber el
+     orden cronologico real.
+  c) Definir con precision `"RETOMA DIRECCION CONTRARIA"`:
+     - No disparar con una sola vela contraria justo bajo `g_RangeHigh`: exigir
+       reingreso confirmado al rango + quiebre de `g_RangeMid` (50%) o quiebre de
+       estructura contraria (`close` cerrando en la mitad opuesta / rompiendo el
+       ultimo swing en direccion contraria tras haber salido por ambos extremos).
+  d) Si `Setup 3` se activa mientras ya hay una posicion abierta (`IN_TRADE`):
+     - Cancelar todas las ordenes pendientes de los demas setups, bloquear nuevas
+       entradas del dia, y permitir configurar si la posicion viva sigue su
+       gestion normal o aplica proteccion defensiva.
+
+4.4. Corregir escalones RR, Trailing estructural, Judas y Ablacion
+- Referencia: `ESTRATEGIA_SETUP1.md`, `setup2_continuacion.md`, `9.png`, `19.png`,
+  `Nova_Bot_v1.mq5` (`v3.11`).
+- Implementacion:
+  a) **Eliminar escalones excluyentes (`else if`) que saltan protecciones:**
+     - Calcular el piso minimo garantizado `floorSL` segun el `currentRR` maximo
+       alcanzado (guardar `m.maxRRReached` o evaluar secuencialmente):
+       * `>= 0.50 R` -> `floorSL` en `-0.25 R`
+       * `>= 0.80 R` -> `floorSL` en `+0.50 R` (o opcion cerrar parcial/total en `+0.50 R` segun regla)
+       * `>= 1.18 R` -> `floorSL` en `+1.15 R` (o min `+1.10 R`)
+       * `>= 1.20 R` (corregir tambien el typo `1.80` de v1) -> trailing por
+         swings estructurales, siempre tomando el SL MAS protector entre
+         `floorSL` y `structSL` (en compra `MathMax(floorSL, structSL)`; en venta
+         `MathMin(floorSL, structSL)`).
+  b) **Reemplazar `ObtenerSoportesResistenciasM5()` de 6 velas brutas por swings reales:**
+     - Implementar deteccion de pivotes/fractales M5 reales (ej. ultimo swing low
+       confirmado con `k=2` velas a cada lado en compras, o ultimo alto/bajo de
+       retroceso estructural M5 dentro de una ventana de hasta 20-30 velas), con
+       margen en puntos de indice (`InpTrailSwingBufferPts`).
+  c) **Activar o limpiar `InpUseOptimizedTrail` y las banderas de ablacion:**
+     - Incorporar las banderas `InpExit_Grace`, `InpExit_Open930`, `InpExit_Trailing`,
+       `InpExit_EndOfDay` (como en `v3.11`), todas en **`true` por defecto** en el
+       EA de produccion, y conectar `InpUseOptimizedTrail` si se quiere comparar
+       trailing original Nova vs optimizado.
+  d) **Implementar regla "Judas" (`-0.50 RR`):**
+     - En Setup 1 y Setup 2 Continuacion, la regla especifica: *"En caso de Judas
+       (falso quiebre en contra) minimizar perdidas cerrando cerca de -0.50 RR"*.
+     - Agregar modo configurable:
+       * `input bool InpEnableJudasCut = false;` (para testear A/B vs dejar SL intacto)
+       * `input double InpJudasTriggerRR = -0.50;`
+       * Si el trade no alcanzo BE/momentum y aparece un cierre de vela M5 en
+         contra atravesando el nivel de entrada o alcanzando `currentRR <= -0.50`
+         con estructura rota en contra (ej. cierre dentro del rango / bajo 2Qe),
+         cerrar en `-0.50 R` en lugar de esperar `-1.0 R` (respetando Bullfy).
+  e) **Verificar `SYMBOL_TRADE_FREEZE_LEVEL` en `MoverSLSeguro()`:**
+     - Usar `double reqDist = MathMax(minStop, freezeLevel);` antes de llamar a
+       `PositionModify`, evitando errores `TRADE_RETCODE_FROZEN (10029)`.
+  f) **Corregir `UltimoTradeCerroEnPerdida()`:**
+     - Filtrar por `_Symbol`, rango del dia actual, y sumar `DEAL_PROFIT +
+       DEAL_SWAP + DEAL_COMMISSION` para reflejar el resultado neto real.
+
+================================================================================
+FASE 5: OPTIMIZACION, SIMULACION EN BACKTEST Y DOCUMENTACION (P2)
+================================================================================
+
+5.1. Optimizacion de CPU y renderizado en `OnTick()`
+- Afecta: `CalcularRango()`, `DibujarEscenario()`, `ActualizarHUD()`.
+- Implementacion:
+  a) En `OnTick()`, si `nyTime >= nyRangeEnd` y `g_RangeReady == true`, NO volver
+     a llamar `CalcularRango()` en cada tick durante el resto del dia.
+  b) En `CalcularRango()`, validar que existan suficientes barras en el rango
+     (`bars >= 10` y `g_RangeHigh > g_RangeLow`) antes de dar `g_RangeReady = true`.
+  c) Mover `DibujarEscenario()` al bloque de nueva barra M5 (o solo actualizar
+     durante `02:00-07:00 NY` y una vez al completar el rango).
+  d) En `ActualizarHUD()`: cachear el texto/color anterior de cada linea `L0..L9`
+     y llamar a `ObjectSetString` / `ObjectSetInteger` SOLO si cambio el texto o
+     el color (acelera significativamente las pruebas visuales y live).
+  e) Ajustar ancho de `NOVA_HUD_BG` (`w = 460`) o truncar `g_NextNewsInfo` a un
+     maximo de caracteres para que no se desborde del panel.
+
+5.2. Simulador historico de noticias para Strategy Tester (`MQL_TESTER`)
+- Problema actual: `EstaBloqueadoPorNoticias` siempre retorna `false` en
+  backtest, impidiendo medir el impacto real de las noticias rojas y FOMC de
+  Bullfy en 2023-2026.
+- Implementacion:
+  a) En `OnInit()`, si `MQLInfoInteger(MQL_TESTER)` y `InpUseNewsFilter`,
+     intentar cargar un archivo `Common\Files\ff_news_history.csv` (formato:
+     `yyyy.mm.dd HH:MM;currency;impact;title` en hora NY).
+  b) Si existe el CSV, poblar `g_NewsList` normalmente y ejecutar la misma logica
+     de bloqueo Bullfy y FOMC durante el Strategy Tester; si no existe, dejar
+     el estado `"Backtest sin CSV noticias"` visible en el log inicial.
+
+5.3. Limpieza y correccion de documentacion y backtests
+- Archivos afectados:
+  - Resultado de backtesting a mano\backtest_2023_h1.md
+  - Resultado de backtesting con Nova_Bot_v1\reporte_backtest_mt5_nas100.md
+  - Ejemplos setups\Setup1\ESTRATEGIA_SETUP1.md
+  - Ejemplos setups\Setup 2 de nacimiento\setup2_nacimiento.md
+  - Ejemplos setups\Setup 2 de continuacion\setup2_continuacion.md
+  - Ejemplos setups\Setup 3 no operable\setup3_no_operable.md
+- Acciones:
+  a) Corregir la tabla resumen de `backtest_2023_h1.md` con los conteos reales
+     de las capturas de Forex Tester (77 dias: 40 verdes / 37 rojos; Enero 9V/5R,
+     Marzo 6V/8R, Abril 7V/7R, Mayo 5V/8R, Junio 9V/5R) y agregar nota aclaratoria
+     sobre las entradas de domingo (18:00 NY apertura Asia/semana).
+  b) Vincular en `reporte_backtest_mt5_nas100.md` a que version/configuracion
+     exacta corresponde cada corrida (la de `$9,087.37`, la de `$322.71` y la
+     de ablacion `-$4,867.67`) para que el historico sea reproducible.
+  c) Limpiar todas las etiquetas residuales `[cite: N]` en los archivos `.md`.
+
+================================================================================
+FASE 6: PLAN DE PRUEBAS Y VALIDACION PASO A PASO
+================================================================================
+
+6.1. Validacion de compilacion
+- Compilar el EA unificado en MetaEditor 5 (`0 errors, 0 warnings`).
+- Verificar que todos los inputs muestren descripciones claras y sin colisiones.
+
+6.2. Pruebas unitarias funcionales en Strategy Tester (Modo Visual + `InpDebugTrace=true`)
+Validar manualmente con las fechas exactas de referencia en `Ejemplos setups\`:
+1) **Setup 1 (Compra 29/09/2026, Venta 09/08/2026, Compra 26/04/2026, Compra 13/04/2026):**
+   - Verificar deteccion de `1QR >= 0.20%` (incluyendo quiebres post `07:00 NY`),
+     `1Qe`, `2Qe`, asignacion correcta de `SL A` (`> 0.50%`), y que `S1` no
+     pierde entradas cuando el movimiento arranca entre `07:00` y `08:00 NY`.
+2) **Setup 2 Nacimiento (Venta 16/08/2026 SL C, Compra 14/06/2026 SL A):**
+   - Verificar deteccion del barrido entre `07:00-08:00 NY` (`16/08`), deteccion
+     de `CH`, reaccion `50%` + `BOS`, entrada al `75%`, y colocacion fiel de
+     `SL C` y `SL A` fuera del rango.
+3) **Setup 2 Continuacion (Venta 22/02/2026 SL A, Compra 28/12/2025 SL C):**
+   - Verificar que `S2C` detecta `1QR`, `2QR >= 0.15%`, `1Qe`, `2Qe` y calcula
+     `SL A`/`SL C` por distancia al `FINAL` del rango sin falsos bloqueos de S3.
+4) **Setup 3 No Operable:**
+   - Probar un dia con barrido bilateral verdadero (debe bloquear el resto del
+     dia) y un dia con mero mecha de 1-2 puntos + continuacion (NO debe bloquear).
+
+6.3. Pruebas de regresion de infraestructura y Prop Firm (Demo + Tester)
+1) **Reinicio en medio de un trade abierto:**
+   - Abrir un trade en demo o simular recarga de grafico/cambio de timeframe:
+     confirmar que `initRisk`, `slType`, `stage = *_IN_TRADE` y `tradesToday` se
+     restauran exactamente sin duplicar ordenes ni cerrar trades ganadores.
+2) **Ventana de noticias Bullfy + FOMC (CSV en Tester y Feed vivo en Demo):**
+   - Simular noticia roja con trade abierto de 25 min en perdida y 2 horas en
+     ganancia: verificar en el CSV de traza que el EA **NO** ejecuta `PositionClose`
+     ni `PositionModify` durante `[T-5m, T+5m]`.
+   - Simular noticia FOMC a las `14:00 NY`: verificar cierre/bloqueo a las `12:30 NY`.
+3) **Cambio DST (Marzo 2023: semanas 12/03 - 26/03):**
+   - Comprobar en el HUD / CSV de traza que `g_NYOffsetSec` pasa automaticamente
+     de `7h` a `6h` y vuelve a `7h` el 26/03/2023.
+4) **Sesion Asia (`InpEnableAsiaSession = true`):**
+   - Verificar que coloca pendientes entre `18:00-21:30 NY`, no las borra por
+     `nyTime > 15:00`, ni las cierra a las `18:05` por la regla `15:40`.
+
+6.4. Benchmark y Ablacion Final (2023 H1 y 2025-2026)
+- Correr Strategy Tester en `NAS100 M5` (`2023.01.03 - 2023.06.30`, ticks reales)
+  comparando:
+  a) Configuracion base v2.3 sin cambios (linea base).
+  b) Con fixes P0+P1 (07:00 observacion + DST + S2N 50%/BOS + S3 + Trailing swings).
+  c) Pruebas de sensibilidad: `InpDirect2QeEntry` (`false` vs `true`),
+     `InpEnableJudasCut` (`false` vs `true`), `InpEnableAsiaSession` (`false` vs `true`).
+- Confirmar metricas objetivo antes de pasar a cuenta de evaluacion Bullfy:
+  Profit Factor > 1.4, Equity Drawdown Maximo < 5% (dentro de limites Bullfy),
+  0 infracciones en ventanas de noticias y consistencia por sesion.
+
+================================================================================
+ORDEN RECOMENDADO DE EJECUCION (SPRINT PLAN)
+================================================================================
+- Sprint 1 (Seguridad & Base): Fase 1 + Fase 2 (sin tocar aun reglas de setups)
+  -> Garantiza que el EA compila, tiene control de cambios y no quema cuentas Bullfy.
+- Sprint 2 (Tiempo & Estado): Fase 3 (DST, 07:00-08:00 NY, Reconstruccion, Asia)
+  -> Garantiza consistencia horaria y tolerancia a reinicios.
+- Sprint 3 (Logica Estrategica): Fase 4 (S2N, Motor Qe, S3, Swings, Judas)
+  -> Alinea la operativa automatica con los diagramas y el backtest manual.
+- Sprint 4 (Performance & Docs): Fase 5 + Fase 6 (Optimizacion, CSV noticias, tests)
+  -> Validacion estadistica final previa a produccion.
+
+================================================================================
+7. CONSTANCIA DE LO IMPLEMENTADO (ENTREGA AL CREADOR ORIGINAL DEL PROYECTO)
+================================================================================
+Fecha de cierre : 2026-11-26
+Nota importante : En el equipo donde se realizo la auditoria y modificacion
+                  no esta instalado MetaTrader 5 ni MetaEditor 5, por lo que
+                  todos los cambios en MQL5 se verificaron mediante auditoria
+                  estatica (sintaxis, llaves, parentesis, tipos e identificadores)
+                  y quedan listos para compilar a .ex5 y probar en Strategy Tester
+                  directamente en la PC con MT5.
+
+--------------------------------------------------------------------------------
+7.1. INVENTARIO EXACTO DE ARCHIVOS CREADOS Y MODIFICADOS
+--------------------------------------------------------------------------------
+A) ARCHIVOS CREADOS:
+1. Nova_Bot_v3.mq5 (2,732 lineas | #property version "3.00")
+   - Nuevo EA unificado de produccion basado en la estructura de
+     Nova_Bot_v2_1_Clone.mq5 (v2.3) + los flags de ablacion de v3.11 + todas
+     las correcciones de las Fases 1 a 5.
+   - Aun NO tiene archivo .ex5 compilado (generar compilando en MetaEditor 5).
+
+2. PLAN_IMPLEMENTACION.txt (este documento)
+   - Diagnostico tecnico, plan de implementacion y registro de cambios.
+
+B) ARCHIVOS MODIFICADOS:
+1. .gitignore (15 lineas)
+   - Antes: tenia pegado un fragmento JSON de VS Code ("includePath" con ruta
+     de usuario C:\Users\mia\...).
+   - Ahora: reglas limpias para MT5/Git (*.ex5, *.log, *.csv, Tester/, .vscode/).
+   - Nota: no se ejecuto `git init` para no alterar carpetas ocultas al copiar
+     manualmente; queda listo por si se desea inicializar Git.
+
+2. Nova_Bot_v2.mq5 (1,425 lineas)
+   - Corregido el error de compilacion por declaracion duplicada de
+     `input bool InpEnableSetup3Filter = true;` (estaba repetido en las
+     lineas 41-42).
+   - Limpiada la expresion ternaria redundante `esContinuacion ? g_RangeHigh : g_RangeHigh`
+     (y `g_RangeLow`) en `ColocarOrdenMotorQe`.
+   - Nota: `Nova_Bot_v2.ex5` existente en carpeta es previo a esta correccion;
+     recompilar en MetaEditor si se va a utilizar `v2`, aunque la version
+     recomendada para produccion es `Nova_Bot_v3.mq5`.
+
+3. Resultado de backtesting a mano\backtest_2023_h1.md (108 lineas)
+   - Corregida la tabla resumen mensual segun los datos diarios y capturas
+     reales de Forex Tester: total real de 77 dias operados (41 verdes / 36
+     rojos), frente a los 72 dias (39V/33R) que mostraba originalmente
+     (Enero 9V/5R, Febrero 5V/3R, Marzo 6V/8R, Abril 7V/7R, Mayo 5V/8R,
+     Junio 9V/5R).
+   - Agregada nota aclaratoria sobre las operaciones en domingo (`5 Mar`,
+     `2 Apr`, `7 May`) correspondientes a apertura semanal / Asia.
+   - Eliminadas las etiquetas residuales `[cite: N]`.
+
+4. Resultado de backtesting con Nova_Bot_v1\reporte_backtest_mt5_nas100.md (106 lineas)
+   - Agregada Seccion 6 ("Reconciliacion con las Capturas Adjuntas en esta
+     Carpeta") explicando que las capturas muestran dos corridas distintas al
+     reporte de `$9,087.37`: corrida de las 18:16 (`$322.71`, 194 trades, PF 1.02)
+     y corrida de las 19:13 (`-$4,867.67`, 99 trades, 17.17% winrate, DD 14.21%,
+     coincidente con la configuracion de ablacion con salidas en `false` de
+     `Nova_Bot_v1.mq5`).
+
+5. Documentos de especificacion de setups (limpieza de marcadores `[cite: N]`):
+   - Ejemplos setups\Setup 2 de nacimiento\setup2_nacimiento.md
+   - Ejemplos setups\Setup 2 de continuacion\setup2_continuacion.md
+   - Ejemplos setups\Setup 3 no operable\setup3_no_operable.md
+
+C) ARCHIVOS CONSERVADOS SIN CAMBIOS COMO LINEA BASE / REFERENCIA:
+- Nova_Bot_v2_1_Clone.mq5 (se mantiene intacto como linea base v2.3 para
+  comparacion A/B en Strategy Tester).
+- Ejemplo de estructura\Nova_Bot_v1.mq5 (se mantiene intacto como referencia
+  de ablacion v3.11).
+- Bullfy\bullfy.txt, *.ex5 preexistentes y todas las imagenes .png.
+
+--------------------------------------------------------------------------------
+7.2. DETALLE TECNICO DE TODO LO IMPLEMENTADO EN Nova_Bot_v3.mq5
+--------------------------------------------------------------------------------
+
+1) CUMPLIMIENTO PROP FIRM BULLFY LTD. (Clausula 12.2 / Art. 01 y Art. 14):
+   - Proteccion obligatoria en noticias rojas (`PuedeCerrarOModificarPorBullfy`):
+     * Calcula antiguedad exacta (`srvTime - POSITION_TIME`) y PnL neto real
+       (`POSITION_PROFIT + POSITION_SWAP + DEAL_COMMISSION` via
+       `ObtenerComisionPosicion`, evitando la propiedad obsoleta
+       `POSITION_COMMISSION`).
+     * Dentro de la ventana `[T - InpNewsMinsBefore, T + InpNewsMinsAfter]`
+       con margen de seguridad de 30s (`EstaEnVentanaRestringidaBullfy`), BLOQUEA
+       todo `PositionClose` y `MoverSLSeguro` si la posicion no supera:
+       - `>= 3660s` (60 min + colchon) en perdida neta (`< 0`), o
+       - `>= 86460s` (24 h + colchon) en beneficio neto / zona BE (`>= -5 USD`).
+   - Pausa no destructiva de ordenes pendientes (`PausarPendientesPorBloqueo`):
+     * Al acercarse una noticia (`120s` antes) o al pausarse por bloqueo, si
+       `InpKeepPreExistingPendingInNews = false`, cancela pendientes sin destruir
+       el estado del setup (`QE_FINISHED`/`S2N_FINISHED`); pasa a `*_READY_ORDER`
+       con bandera `pausedByNews = true` y rearma automaticamente al terminar la
+       ventana mediante `IntentarArmarPendientesEnEspera`.
+     * Si `InpKeepPreExistingPendingInNews = true`, conserva ordenes previas
+       (permitido por Art. 01) y solo bloquea nuevas.
+   - Regla FOMC (`InpUseFOMCRule`, `HayFOMCProximo`, `CerrarPosicionesPorFOMC`):
+     * Detecta eventos con `"FOMC"` o `"FEDERAL FUNDS RATE"` (`EsTituloFOMC`) y
+       `InpFOMCExitMinsBefore` (90 min) antes del anuncio bloquea nuevas
+       entradas, pausa pendientes y cierra posiciones abiertas (siempre pasando
+       por `PuedeCerrarOModificarPorBullfy`).
+   - Robustez de `ActualizarCalendarioNoticias`:
+     * Verifica `res == 200` y XML valido antes de reemplazar `g_NewsList` (evita
+       que un HTTP 429/503 vacie el calendario y apague el filtro).
+     * Cooldown de reintento de 120s en error de red para no congelar `OnTick`.
+     * Filtro estricto `DivisaEnFiltroNoticias` (soporta comas, normaliza a
+       mayusculas, rechaza `<country>` vacio).
+   - Guardia de Drawdown Diario (`ActualizarGuardiaDrawdownDiario`):
+     * Freno preventivo si la caida de equidad diaria alcanza `InpMaxDailyLossPct`
+       (3.50% por defecto), persistiendo `DAYBAL`/`DAYEQ` en `GlobalVariable`.
+   - Lotaje y margen (`CalcularLotajePorRiesgo`, `EnviarOrdenStop`):
+     * Calcula decimales dinamicamente segun `SYMBOL_VOLUME_STEP` (sin hardcodear 2).
+     * Si `minLot` supera `InpMaxAllowedRiskPct` (0.75%), aborta la orden y
+       registra `SKIP` en CSV (`InpSkipIfMinLotExceedsRisk = true`).
+     * Valida margen libre con `OrderCalcMargin(ORDER_TYPE_BUY/SELL, ...)`.
+
+2) HORARIOS, DST AUTOMATICO, OBSERVACION 07:00 NY, PERSISTENCIA Y ASIA:
+   - DST automatico (`CalcularOffsetNYSegundos`):
+     * Calcula dinamicamente las transiciones de EEUU (2do domingo de marzo a
+       1er domingo de noviembre) y del broker europeo (ultimo domingo de marzo
+       a ultimo domingo de octubre), corrigiendo el desfase de 6h vs 7h que
+       ocurria en marzo y octubre/noviembre con el offset fijo `7`.
+   - Observacion estructural desde las 07:00 NY (`InpObserveFrom7AM`):
+     * `EvaluarVela` observa cierres M5 (`closedBarNY = time1 - g_NYOffsetSec`)
+       desde `07:00 NY` para detectar `1QR`, `CH`, `Setup 3` y `g_FirstBreakDir`,
+       mientras que el envio de ordenes al broker se habilita estrictamente en
+       ventana operativa (`08:00-15:00 NY` o Asia `18:00-21:30 NY`).
+     * Configurable con `InpArmPre8AMTriggerAt8AM` si una senal pre-08:00 se
+       arma al abrir las `08:00 NY`.
+   - Recuperacion tras reinicio / cambio de temporalidad:
+     * `GuardarMetadataGV` y `RecuperarInitRiskDesdeHistorial` persisten y
+       recuperan `initRisk`, `maxRRReached`, `slType`, `tradesToday` y sesion
+       (`GlobalVariable` + `HistoryOrderSelect` + `HistorySelectByPosition`),
+       eliminando el bug critico de `initRisk == 0.0` y evitando reentradas
+       duplicadas mediante `ContarTradesHoyEnHistorial`.
+   - Sesion Asia funcional (`InpEnableAsiaSession`, `ReactivarParaSesionAsia`):
+     * Expiracion separada entre NY (`nyLastEntry`) y Asia (`nyAsiaLastEntry`),
+       usando `ORDER_TIME_SPECIFIED` si el simbolo lo soporta o `ORDER_TIME_GTC`
+       con borrado exacto al cerrar ventana (`ExpiroVentanaPendiente`).
+     * La regla `15:40 NY` (`InpClose1540Rule`) solo aplica a trades de NY
+       (`!inAsia`), evitando cierres inmediatos en Asia.
+
+3) FIDELIDAD DE SETUPS, TRAILING FRACTAL, JUDAS Y BACKTEST:
+   - Setup 2 Nacimiento (`ProcesarSetup2NacimientoVela`, `ConfirmarYColocarS2Nac`):
+     * Secuencia completa `S2N_WAIT_CH -> S2N_WAIT_50_REACTION -> S2N_WAIT_BOS -> S2N_READY_ORDER`
+       (con toggle `InpS2N_Strict50BOS` para comparar contra modo directo).
+     * Conserva pivote previo `X` como nivel `CH` si hay barrido mas profundo.
+     * `SL A` externo al `0% INICIO` usando `InpS2N_SL_AgresSweepFrac` (acorde a
+       las capturas reales), `SL M` en pivote interno, y tope `InpS2N_MaxTradesPerDay`.
+   - Motor Qe (`ProcesarMotorQeVela`, `EsVelaPullbackQe`, `ColocarOrdenMotorQe`):
+     * Modo fiel `PB_MODE_COUNTER_OR_PAUSE` (velas contrarias o detenimientos)
+       con `InpPullbackCandles = 2` y `InpDirect2QeEntry = false` (Confirmacion
+       Premium al cierre con cuerpo, parametrizable A/B).
+     * Buffers en puntos de indice independientes de `_Digits` (`IndexPtsToPrice`).
+     * Reentrada tras salida por Gracia / 09:30 ajustando `lvl2Qe` segun direccion
+       (`MathMax` en compras, `MathMin` en ventas) para evitar reentrada ciega.
+     * Opcion `InpS2C_RequireS2NStructure` y flags separados `InpS1_AllowDeepPullback`
+       / `InpS2C_AllowDeepPullback`.
+   - Setup 3 (`EvaluarFiltroSetup3`):
+     * Margen minimo `InpS3_MinOutPct` (`0.05%`), desempate intrabar con velas M1
+       y exigencia de cruce de 50% (`InpS3_RequireMidCross`) antes de cancelar.
+   - Trailing, Judas y Optimizacion:
+     * `AplicarTrailingProgresivo`: pisos por `maxRRReached` sin saltos de
+       proteccion (`+0.50R`, `+0.80R`, `+1.18R`, `>= 1.20R`) combinados con
+       swings fractales reales M5 (`ObtenerSwingEstructuralM5` con
+       `InpSwingFractalBars` / `InpSwingLookbackBars`).
+     * Mitigacion Judas (`InpEnableJudasCut`, `InpJudasTriggerRR = -0.50`).
+     * Chequeo de `SYMBOL_TRADE_FREEZE_LEVEL` en `MoverSLSeguro`.
+     * Rango diario calculado una sola vez al cerrar 07:00 NY (`g_RangeFinalized`),
+       dibujo por barra M5 y cache de HUD (`g_HudCacheText`/`g_HudCacheColor`).
+     * Soporte de noticias historicas en Strategy Tester mediante
+       `Common\Files\ff_news_history.csv` (`CargarNoticiasHistoricasCSV`).
+
+--------------------------------------------------------------------------------
+7.3. VERIFICACION ESTATICA EJECUTADA (SIN METAEDITOR LOCAL)
+--------------------------------------------------------------------------------
+Se verifico mediante script tras la ultima edicion:
+- `Nova_Bot_v2.mq5` : 1,425 lineas | llaves 148/148 | parentesis 612/612 |
+  corchetes 11/11 | 44 inputs | 0 duplicados.
+- `Nova_Bot_v3.mq5` : 2,732 lineas | llaves 309/309 | parentesis 1177/1177 |
+  corchetes 33/33 | 86 inputs | 0 duplicados en inputs, globales ni funciones.
+- Marcadores `[cite:` restantes en archivos `.md`: 0.
+
+--------------------------------------------------------------------------------
+7.4. PASOS INMEDIATOS PARA EL CREADOR EN METATRADER 5
+--------------------------------------------------------------------------------
+1. Copiar `Nova_Bot_v3.mq5` (y `Nova_Bot_v2.mq5` si corresponde) a la carpeta
+   `MQL5\Experts\` del terminal MT5.
+2. Abrir `Nova_Bot_v3.mq5` en **MetaEditor 5** y presionar **F7 (Compile)** para
+   generar `Nova_Bot_v3.ex5` y confirmar `0 errors, 0 warnings` (y recompilar
+   `Nova_Bot_v2.mq5` si se desea actualizar `Nova_Bot_v2.ex5`).
+3. En MT5 (`Tools -> Options -> Expert Advisors`), habilitar **Allow WebRequest
+   for listed URL** y agregar:
+   `https://nfs.faireconomy.media`
+4. (Opcional para backtesting realista con noticias Bullfy/FOMC): colocar en
+   `Terminal\Common\Files\ff_news_history.csv` el historico de noticias con
+   columnas separadas por `;`:
+   `yyyy.mm.dd HH:MM;USD;High;Titulo del evento` (en hora NY).
+5. Ejecutar en Strategy Tester (`NAS100`, `M5`, Every tick based on real ticks)
+   la bateria de la Fase 6 con `InpDebugTrace = true`, revisando los archivos
+   `Common\Files\Nova_v3_trace_*.csv` y comparando contra `Nova_Bot_v2_1_Clone`
+   en los ejemplos de `Ejemplos setups\` y el periodo `2023.01.03 - 2023.06.30`.
+================================================================================

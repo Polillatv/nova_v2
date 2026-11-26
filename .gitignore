@@ -1,6 +1,15 @@
-.vscode
-"includePath": [
-  "${workspaceFolder}/**",
-  "C:\\Users\\mia\\AppData\\Roaming\\MetaQuotes\\Terminal\\73B7A2420D6397DFF9014A20F1201F97\\MQL5\\Include"
-]
+# Binarios compilados MT5
+*.ex5
 
+# Logs, reportes y trazas locales
+*.log
+*.csv
+Tester/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.tmp
+Thumbs.db
+.DS_Store

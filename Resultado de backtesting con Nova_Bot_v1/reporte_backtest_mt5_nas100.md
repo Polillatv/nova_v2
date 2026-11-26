@@ -93,3 +93,14 @@
 - **Por Mes (Ene - Jun 2023):**
   - **Meses positivos:** Enero (`~$3,700` vs `~$3,400`), Febrero (`~$4,900` vs `~$4,100`), Marzo (`~$5,300` vs `~$3,200`), Abril (`~$5,800` vs `~$1,600` - mejor ratio mensual), y Junio (`~$8,300` vs `~$3,800` - mayor ganancia bruta).
   - **Mes negativo:** Mayo (`~$2,400` ganancia bruta vs `~$5,800` pérdida bruta), coincidiendo con el drawdown observado en la curva de balance.
+
+---
+
+## 6. Reconciliación con las Capturas Adjuntas en esta Carpeta
+Esta carpeta contiene capturas de **dos corridas adicionales** realizadas el `2026-11-24` que difieren de la corrida de `$9,087.37` documentada arriba:
+
+1. **Corrida 18:16 (`Captura de pantalla 2026-11-24 181601.png` y `181653.png`):**
+   - `Total Net Profit`: `$322.71` | `Profit Factor`: `1.02` | `Trades`: `194` (`55.67%` winrate) | `Equity DD Máx`: `3.60%` (`$3,639.50`).
+2. **Corrida 19:13 (`Captura de pantalla 2026-11-24 191341.png` y `191353.png`):**
+   - `Total Net Profit`: `-$4,867.67` | `Profit Factor`: `0.88` | `Trades`: `99` (`17.17%` winrate) | `Equity DD Máx`: `14.21%` (`$14,698.46`).
+   - Coincide con la configuración de ablación en `Ejemplo de estructura/Nova_Bot_v1.mq5` (`v3.11`) con las salidas (`InpExit_Grace`, `InpExit_Open930`, `InpExit_S2N_BE`, `InpExit_Trailing`, `InpExit_EndOfDay`) desactivadas (`false`), dejando TP/SL fijos (`4R/5R`).
