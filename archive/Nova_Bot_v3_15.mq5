@@ -1,11 +1,11 @@
 ﻿//+------------------------------------------------------------------+
 //|                                                  Nova_Bot_v3.mq5 |
-//|           Estrategia Nova - Edición Híbrida Unificada v3.13      |
+//|           Estrategia Nova - Edición Fiel Manual v3.15            |
 //|   Calibración Fiel Backtest Manual + Bullfy + DST Auto + S1/2/3  |
-//|   Trailing Desacoplado: Qe (ATR+Swing v3.11) + S2N (Swing v3.10) |
+//|   Fix 1QR!=1Qe + Carryover 24/7 + Gracia SL -0.25R + Swing M5    |
 //+------------------------------------------------------------------+
 #property copyright "Estrategia Nova"
-#property version   "3.13"
+#property version   "3.15"
 
 #include <Trade\Trade.mqh>
 
@@ -22,7 +22,8 @@ enum ENUM_TRAIL_MODE
   {
    TRAIL_NOVA_SWING = 0,         // Estándar Nova v3.10 (+0.50/-0.25, +0.80/+0.50, +1.80/+1.15, >=2.00 swings)
    TRAIL_OPTIMIZED  = 1,         // Optimizado (+0.65/BE, +1.00/+0.50, +1.50/+1.00, >=2.00 swings)
-   TRAIL_ATR_SWING  = 2          // Activo Qe v3.13 (escalones 1.2/1.5/1.8R + swings >=1.5R + ATR fallback)
+   TRAIL_ATR_SWING  = 2,         // Activo Qe v3.13 (escalones 1.2/1.5/1.8R + swings >=1.5R + ATR fallback)
+   TRAIL_M5_SWING   = 3          // Fiel Manual v3.15 (-0.25R inicial + Swings Estructurales M5 post-entrada)
   };
 
 input group "=== 1. HORARIOS, DST Y GRÁFICO ==="
@@ -83,10 +84,16 @@ input double          InpSLBufferPts           = 2.0;    // Buffer de SL en punt
 input bool            InpS1_AllowDeepPullback  = true;   // Permitir retroceso profundo en Setup 1 antes de 1Qe
 input bool            InpS2C_AllowDeepPullback = true;   // Permitir retroceso profundo en Setup 2 Cont
 input bool            InpFilter930Open         = true;   // Gestionar apertura 09:30 NY (esperar vela si PE cae ~09:30)
-input bool            InpClose1540Rule         = true;   // Cerrar BE / leve negativo a las 15:40 NY (solo NY)
+input bool            InpClose1540Rule         = false;  // false = No cerrar abiertas en 15:40 NY; monitorear SL en Asia
+input bool            InpProtectAtAsiaEnd      = true;   // Asegurar BE+ al cerrar Asia / ir a dormir
+input int             InpBedtimeProtectHour    = 21;     // Hora NY para proteger en BE+ nocturno
+input int             InpBedtimeProtectMin     = 30;     // Minuto NY para proteger en BE+ nocturno
+input double          InpBedtimeLockRR         = 0.05;   // Nivel RR mínimo a asegurar antes de dormir (+0.05R)
 input bool            InpAvoid10AMHour         = false;  // Evitar nuevas señales de 10:00 a 10:59 NY
-input int             InpGracePeriodMins       = 60;     // Hora de gracia sin momentum (minutos)
-input double          InpGraceMinRR            = 0.20;   // RR mínimo al cumplir la hora si aún no hubo momentum
+input int             InpGracePeriodMins       = 60;     // Minutos para mitigar SL si el precio aún no despegó
+input bool            InpGraceCloseMarket      = false;  // false = Mitigar SL a -0.25R a los 60m (sin cerrar a mercado)
+input double          InpGraceMitigateSL_RR    = -0.25;  // Nivel SL objetivo (RR) al cumplir 60m (-0.25R)
+input double          InpGraceMinRR            = 0.20;   // [Solo si GraceCloseMarket=true] RR mínimo a los 60m
 
 input group "=== 4. UMBRALES SETUP 1, 2 CONTINUACIÓN Y SETUP 3 ==="
 input double InpS1_1QR_Pct              = 0.20;          // Setup 1: Quiebre inicial 1QR (%)
@@ -110,16 +117,24 @@ input int    InpS2N_MaxTradesPerDay     = 1;             // Máximo de trades Se
 input bool   InpS2N_AvoidOpen10AM       = false;         // Bloquear barridos 1QR S2 Nac entre 09:25 y 09:55 NY
 
 input group "=== 6. GESTIÓN, TRAILING HÍBRIDO, JUDAS Y ABLACIÓN ==="
-input bool            InpExit_Grace                 = true;      // Activar salida por hora de gracia (1 sola vez a los 60m)
+input bool            InpExit_Grace                 = true;      // Activar mitigación / gestión de los 60 minutos
 input bool            InpExit_Open930               = true;      // Activar gestión apertura 09:30 NY
 input bool            InpExit_Trailing              = true;      // Activar trailing por RR y swings
-input bool            InpExit_EndOfDay              = true;      // Activar cierre 15:40 NY
-input ENUM_TRAIL_MODE InpTrailModeQe                = TRAIL_ATR_SWING;  // Modo de trailing para Setup 1 y Setup 2 Cont (Motor Qe)
-input ENUM_TRAIL_MODE InpTrailModeS2N               = TRAIL_NOVA_SWING; // Modo de trailing para Setup 2 Nacimiento
+input bool            InpExit_EndOfDay              = true;      // Activar reglas fin de jornada / protección nocturna
+input ENUM_TRAIL_MODE InpTrailModeQe                = TRAIL_M5_SWING;   // Modo de trailing para Setup 1 y Setup 2 Cont (Motor Qe)
+input ENUM_TRAIL_MODE InpTrailModeS2N               = TRAIL_M5_SWING;   // Modo de trailing para Setup 2 Nacimiento
 input double          InpTrail_Step1_TrigRR         = 0.50;      // Escalón 1 (común): activar al llegar a +X RR
 input double          InpTrail_Step1_SL_RR          = -0.25;     // Escalón 1 (común): mover SL a X RR (-0.25R)
-input double          InpTrail_Step2_TrigRR         = 0.80;      // Escalón 2 (común): activar al llegar a +X RR
-input double          InpTrail_Step2_SL_RR          = 0.50;      // Escalón 2 (común): mover SL a +X RR (+0.50R)
+input double          InpManualSwing_StartRR        = 0.80;      // [M5_SWING] Desde +X RR activar trailing por swing M5
+input bool            InpManualSwing_RequireBOS     = true;      // [M5_SWING] Exigir BOS del swing antes de +2.0R
+input double          InpSoftFloor_TrigRR           = 1.25;      // [M5_SWING v3.15] Piso suave: activar a +X RR
+input double          InpSoftFloor_SL_RR            = 0.60;      // [M5_SWING v3.15] Piso suave: SL a +X RR
+input double          InpManualSwing_NoBOSFromRR    = 1.00;      // [M5_SWING v3.15] Desde +X RR aceptar fractal M5 sin exigir BOS
+input bool            InpGraceMicroSwing            = false;     // [v3.15] Micro-swing fBars=1 a los 60m (false = mantener SL)
+input double          InpManualSwing_FreeAboveRR    = 2.00;      // [M5_SWING] Desde +X RR aceptar todo fractal M5 post-entrada
+input bool            InpManualSwing_UseATRFallback = true;      // [M5_SWING] Respaldo ATR en impulsos verticales >=2R sin swing
+input double          InpTrail_Step2_TrigRR         = 0.80;      // [Legacy/ATR] Escalón 2: activar al llegar a +X RR
+input double          InpTrail_Step2_SL_RR          = 0.50;      // [Legacy/ATR] Escalón 2: mover SL a +X RR (+0.50R)
 input double          InpTrail_Step3_TrigRR         = 1.80;      // [NOVA_SWING] Escalón 3: activar al llegar a +X RR (+1.80R)
 input double          InpTrail_Step3_SL_RR          = 1.15;      // [NOVA_SWING] Escalón 3: mover SL a +X RR (+1.15R)
 input double          InpTrail_SwingStartRR         = 2.00;      // [NOVA_SWING] Desde +X RR seguir swings fractales M5
@@ -196,6 +211,18 @@ struct QeMachine
    bool          orderInAsia;
   };
 
+struct CarryoverPos
+  {
+   ulong         ticket;
+   ulong         magic;
+   string        setupName;
+   double        initRisk;
+   double        maxRRReached;
+   bool          open930Done;
+   bool          graceDone;
+   bool          inAsia;
+  };
+
 enum ENUM_S2N_STAGE
   {
    S2N_WAIT_1QR = 0,
@@ -240,6 +267,7 @@ double         g_DayStartEquity       = 0.0;
 
 QeMachine      g_S1;
 QeMachine      g_S2C;
+CarryoverPos   g_CarryPos[];
 
 //--- Estado Setup 2 Nacimiento
 ENUM_S2N_STAGE g_S2NStage             = S2N_WAIT_1QR;
@@ -580,12 +608,14 @@ bool TieneOrdenPendiente(ulong magic, ulong &outTicket, double &outPrice, double
    return false;
   }
 
-bool TienePosicionAbierta(ulong magic, ulong &outTicket, ulong &outPosId, double &outOpen, double &outSL)
+bool TienePosicionAbiertaHoy(ulong magic, datetime srvDayStart, ulong &outTicket, ulong &outPosId, double &outOpen, double &outSL)
   {
    for(int i = PositionsTotal() - 1; i >= 0; i--)
      {
       ulong t = PositionGetTicket(i);
-      if(PositionSelectByTicket(t) && PositionGetString(POSITION_SYMBOL) == _Symbol && (ulong)PositionGetInteger(POSITION_MAGIC) == magic)
+      if(PositionSelectByTicket(t) && PositionGetString(POSITION_SYMBOL) == _Symbol &&
+         (ulong)PositionGetInteger(POSITION_MAGIC) == magic &&
+         (datetime)PositionGetInteger(POSITION_TIME) >= srvDayStart)
         {
          outTicket = t;
          outPosId  = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
@@ -614,7 +644,11 @@ int OnInit()
    g_LastATRBarTime = 0;
    g_CachedATR      = 0.0;
    g_CachedClose1   = 0.0;
-   if(InpTrailModeQe == TRAIL_ATR_SWING || InpTrailModeS2N == TRAIL_ATR_SWING)
+   ArrayResize(g_CarryPos, 0);
+
+   bool requiereATR = (InpTrailModeQe == TRAIL_ATR_SWING || InpTrailModeS2N == TRAIL_ATR_SWING ||
+                       ((InpTrailModeQe == TRAIL_M5_SWING || InpTrailModeS2N == TRAIL_M5_SWING) && InpManualSwing_UseATRFallback));
+   if(requiereATR)
      {
       g_ATRHandle = iATR(_Symbol, PERIOD_M5, MathMax(1, InpTrailX_ATRPeriod));
       if(g_ATRHandle == INVALID_HANDLE)
@@ -632,13 +666,13 @@ int OnInit()
 
    TraceInit();
 
-   Print("NOVA v3.13 | ", _Symbol, " ", EnumToString(_Period),
+   Print("NOVA v3.15 | ", _Symbol, " ", EnumToString(_Period),
          " | autoDST=", (InpAutoDST ? "ON" : "OFF"),
          " | offsetNY=", (g_NYOffsetSec / 3600), "h",
          " | trailQe=", EnumToString(InpTrailModeQe),
          " | trailS2N=", EnumToString(InpTrailModeS2N),
-         " | atrFallback=", (InpTrailX_ATROnlyWithoutSwing ? "ON" : "OFF"),
-         " | atrBarClose=", (InpTrailX_ATROnBarClose ? "ON" : "OFF"),
+         " | graceMarketClose=", (InpGraceCloseMarket ? "ON" : "OFF(SL-0.25R)"),
+         " | close1540=", (InpClose1540Rule ? "ON" : "OFF(AsiaMonitor)"),
          " | riesgo=", DoubleToString(InpRiskPercent, 2), "%");
 
    if(InpUseNewsFilter)
@@ -679,10 +713,12 @@ void OnTick()
    MqlDateTime dtNy;
    TimeToStruct(nyTime, dtNy);
 
-   // Reinicio diario al cambiar de fecha en Nueva York
+   // Reinicio diario al cambiar de fecha en Nueva York (preservando posiciones arrastradas sin bloquear el nuevo día)
    int dayKey = dtNy.year * 10000 + dtNy.mon * 100 + dtNy.day;
    if(dayKey != g_ActiveDayKey)
      {
+      if(g_ActiveDayKey > 0)
+         CapturarPosicionesAlCambioDeDia();
       g_ActiveDayKey  = dayKey;
       g_HistorySynced = false;
       LimpiarGlobalVariablesAntiguas(dayKey);
@@ -692,10 +728,10 @@ void OnTick()
    // Marcas horarias del día actual
    datetime nyRangeStart, nyRangeEnd, nySessStart, nyLastEntry, nySessEnd;
    datetime nyAsiaStart, nyAsiaLastEntry, nyAsiaEnd;
-   datetime srvRangeStart, srvRangeEnd, srvSessStart, srvMarketOpen, srvSessEnd, srvAsiaLastEntry, srvAsiaEnd;
+   datetime srvDayStart, srvRangeStart, srvRangeEnd, srvSessStart, srvMarketOpen, srvSessEnd, srvAsiaLastEntry, srvAsiaEnd;
    ConstruirHorariosDia(dtNy, nyRangeStart, nyRangeEnd, nySessStart, nyLastEntry, nySessEnd,
                         nyAsiaStart, nyAsiaLastEntry, nyAsiaEnd,
-                        srvRangeStart, srvRangeEnd, srvSessStart, srvMarketOpen, srvSessEnd, srvAsiaLastEntry, srvAsiaEnd);
+                        srvDayStart, srvRangeStart, srvRangeEnd, srvSessStart, srvMarketOpen, srvSessEnd, srvAsiaLastEntry, srvAsiaEnd);
 
    // Guardia de pérdida diaria máxima (Prop Firm)
    ActualizarGuardiaDrawdownDiario(nyTime);
@@ -706,6 +742,9 @@ void OnTick()
    bool bloqueadoPorNoticia = EstaBloqueadoPorNoticias(nyTime);
    bool cercaDeNoticia      = EstaEnVentanaRestringidaBullfy(nyTime, 120); // 2 min antes para pausar pendientes limpiamente
    g_FOMCBlockedNY          = (InpUseFOMCRule && HayFOMCProximo(nyTime, fomcTime, fomcTitle));
+
+   // Gestión continua 24/7 de posiciones arrastradas de sesiones previas (actúa incluso entre 00:00 y 07:00 NY)
+   GestionarPosicionesArrastradas(nyTime, srvTime, srvDayStart);
 
    // Activación opcional de sesión Asia a las 18:00 NY
    if(InpEnableAsiaSession && !g_AsiaActivatedToday && nyTime >= nyAsiaStart && nyTime <= nyAsiaLastEntry)
@@ -766,7 +805,7 @@ void OnTick()
         {
          g_HistorySynced = true;
          if(!MQLInfoInteger(MQL_TESTER))
-            ReconstruirEstructuraHoy(srvRangeStart, srvRangeEnd, nySessStart, nyLastEntry, nyAsiaStart, nyAsiaLastEntry);
+            ReconstruirEstructuraHoy(srvDayStart, srvRangeStart, srvRangeEnd, nySessStart, nyLastEntry, nyAsiaStart, nyAsiaLastEntry);
         }
 
       if(g_DailyDDBreached)
@@ -813,8 +852,8 @@ void OnTick()
         }
       else
         {
-         estado = "FUERA DE HORARIO OPERATIVO";
-         clrEstado = clrGray;
+         estado = (PositionsTotal() > 0) ? "MONITOREO SL ASIA / NOCTURNO" : "FUERA DE HORARIO OPERATIVO";
+         clrEstado = (PositionsTotal() > 0) ? clrDeepSkyBlue : clrGray;
         }
      }
 
@@ -848,10 +887,10 @@ void OnTick()
          g_S2NPausedByNews  = false;
         }
 
-      // Gestión activa de pendientes y posiciones
-      GestionarMotorQe(g_S1,  MAGIC_S1,      "S1",  nyTime, srvTime, false, nyLastEntry, nyAsiaStart, nyAsiaLastEntry);
-      GestionarMotorQe(g_S2C, MAGIC_S2_CONT, "S2C", nyTime, srvTime, true,  nyLastEntry, nyAsiaStart, nyAsiaLastEntry);
-      GestionarSetup2Nacimiento(nyTime, srvTime, nyLastEntry, nyAsiaStart, nyAsiaLastEntry);
+      // Gestión activa de pendientes y posiciones abiertas en la jornada actual
+      GestionarMotorQe(g_S1,  MAGIC_S1,      "S1",  nyTime, srvTime, srvDayStart, false, nyLastEntry, nyAsiaStart, nyAsiaLastEntry);
+      GestionarMotorQe(g_S2C, MAGIC_S2_CONT, "S2C", nyTime, srvTime, srvDayStart, true,  nyLastEntry, nyAsiaStart, nyAsiaLastEntry);
+      GestionarSetup2Nacimiento(nyTime, srvTime, srvDayStart, nyLastEntry, nyAsiaStart, nyAsiaLastEntry);
 
       // Evaluación estructural por cierre de vela M5
       datetime barTime = iTime(_Symbol, PERIOD_M5, 0);
@@ -907,11 +946,12 @@ void OnTick()
 void ConstruirHorariosDia(const MqlDateTime &dtNy,
                           datetime &nyRangeStart, datetime &nyRangeEnd, datetime &nySessStart, datetime &nyLastEntry, datetime &nySessEnd,
                           datetime &nyAsiaStart, datetime &nyAsiaLastEntry, datetime &nyAsiaEnd,
-                          datetime &srvRangeStart, datetime &srvRangeEnd, datetime &srvSessStart, datetime &srvMarketOpen,
+                          datetime &srvDayStart, datetime &srvRangeStart, datetime &srvRangeEnd, datetime &srvSessStart, datetime &srvMarketOpen,
                           datetime &srvSessEnd, datetime &srvAsiaLastEntry, datetime &srvAsiaEnd)
   {
    MqlDateTime dtTemp = dtNy;
-   dtTemp.sec = 0;
+   dtTemp.sec  = 0;
+   dtTemp.hour = 0;                   dtTemp.min = 0;                  datetime nyDay0 = StructToTime(dtTemp);
 
    dtTemp.hour = InpRangeStartHour;   dtTemp.min = InpRangeStartMin;   nyRangeStart    = StructToTime(dtTemp);
    dtTemp.hour = InpRangeEndHour;     dtTemp.min = InpRangeEndMin;     nyRangeEnd      = StructToTime(dtTemp);
@@ -924,6 +964,7 @@ void ConstruirHorariosDia(const MqlDateTime &dtNy,
    dtTemp.hour = InpAsiaLastEntryHour; dtTemp.min = InpAsiaLastEntryMin; nyAsiaLastEntry = StructToTime(dtTemp);
    dtTemp.hour = InpAsiaEndHour;       dtTemp.min = InpAsiaEndMin;       nyAsiaEnd       = StructToTime(dtTemp);
 
+   srvDayStart      = nyDay0          + g_NYOffsetSec;
    srvRangeStart    = nyRangeStart    + g_NYOffsetSec;
    srvRangeEnd      = nyRangeEnd      + g_NYOffsetSec;
    srvSessStart     = nySessStart     + g_NYOffsetSec;
@@ -1069,12 +1110,12 @@ void ReactivarParaSesionAsia()
      }
   }
 
-void ReconstruirEstructuraHoy(datetime srvRangeStart, datetime srvRangeEnd, datetime nySessStart, datetime nyLastEntry, datetime nyAsiaStart, datetime nyAsiaLastEntry)
+void ReconstruirEstructuraHoy(datetime srvDayStart, datetime srvRangeStart, datetime srvRangeEnd, datetime nySessStart, datetime nyLastEntry, datetime nyAsiaStart, datetime nyAsiaLastEntry)
   {
-   // 1. Contar trades reales ejecutados hoy desde el historial (evita duplicados al reiniciar)
-   g_S1.tradesToday  = ContarTradesHoyEnHistorial(srvRangeStart, MAGIC_S1);
-   g_S2C.tradesToday = ContarTradesHoyEnHistorial(srvRangeStart, MAGIC_S2_CONT);
-   g_S2NTradesToday  = ContarTradesHoyEnHistorial(srvRangeStart, MAGIC_S2_NAC);
+   // 1. Contar trades reales ejecutados hoy desde 00:00 NY (evita duplicados sin contar arrastradas del día anterior)
+   g_S1.tradesToday  = ContarTradesHoyEnHistorial(srvDayStart, MAGIC_S1);
+   g_S2C.tradesToday = ContarTradesHoyEnHistorial(srvDayStart, MAGIC_S2_CONT);
+   g_S2NTradesToday  = ContarTradesHoyEnHistorial(srvDayStart, MAGIC_S2_NAC);
 
    // 2. Reconstruir estructura de velas desde las 07:00 NY (o 08:00 si ObserveFrom7AM = false)
    datetime obsStartSrv = InpObserveFrom7AM ? srvRangeEnd : (nySessStart + g_NYOffsetSec);
@@ -1090,13 +1131,13 @@ void ReconstruirEstructuraHoy(datetime srvRangeStart, datetime srvRangeEnd, date
         }
      }
 
-   // 3. Sincronizar estado real contra posiciones y órdenes abiertas en el bróker
-   SincronizarMaquinaConBrokerQe(g_S1,  MAGIC_S1,      1);
-   SincronizarMaquinaConBrokerQe(g_S2C, MAGIC_S2_CONT, 1);
+   // 3. Sincronizar estado real contra posiciones y órdenes abiertas HOY en el bróker
+   SincronizarMaquinaConBrokerQe(g_S1,  MAGIC_S1,      srvDayStart, 1);
+   SincronizarMaquinaConBrokerQe(g_S2C, MAGIC_S2_CONT, srvDayStart, 1);
 
    ulong posT = 0, posId = 0, ordT = 0;
    double openP = 0.0, curSL = 0.0, ordP = 0.0, ordSL = 0.0;
-   if(TienePosicionAbierta(MAGIC_S2_NAC, posT, posId, openP, curSL))
+   if(TienePosicionAbiertaHoy(MAGIC_S2_NAC, srvDayStart, posT, posId, openP, curSL))
      {
       g_S2NStage = S2N_IN_TRADE;
       if(PositionSelectByTicket(posT))
@@ -1119,12 +1160,12 @@ void ReconstruirEstructuraHoy(datetime srvRangeStart, datetime srvRangeEnd, date
      }
   }
 
-void SincronizarMaquinaConBrokerQe(QeMachine &m, ulong magic, int maxTradesPerSetup)
+void SincronizarMaquinaConBrokerQe(QeMachine &m, ulong magic, datetime srvDayStart, int maxTradesPerSetup)
   {
    ulong posT = 0, posId = 0, ordT = 0;
    double openP = 0.0, curSL = 0.0, ordP = 0.0, ordSL = 0.0;
 
-   if(TienePosicionAbierta(magic, posT, posId, openP, curSL))
+   if(TienePosicionAbiertaHoy(magic, srvDayStart, posT, posId, openP, curSL))
      {
       m.stage = QE_IN_TRADE;
       if(PositionSelectByTicket(posT))
@@ -1271,6 +1312,7 @@ void EvaluarVela(datetime nyTime, int shift, bool soloReconstruccion, bool puede
      }
 
    //--- A. Setup 2 Nacimiento: 1QR >= 0.05% (con o sin cuerpo). NO invalida Setup 1.
+   bool s2nRecienActivado = false;
    if(InpEnableSetup2Nac && !bloqueadoAperturaS2N && g_S2NStage == S2N_WAIT_1QR && g_S2NTradesToday < InpS2N_MaxTradesPerDay)
      {
       if(low1 <= s2nBuy1QR)
@@ -1278,6 +1320,7 @@ void EvaluarVela(datetime nyTime, int shift, bool soloReconstruccion, bool puede
          g_S2NDir = 1; g_S2NExtreme = low1; g_S2NXPivot = high1; g_S2NCHLevel = high1;
          g_S2NXPivotSet = false; g_S2NCHLockedFromX = false; g_S2NPullbackSeen = false; g_S2NReached50 = false; g_S2NInternalRef = low1;
          g_S2NStage = S2N_WAIT_CH;
+         s2nRecienActivado = true;
          DibujarNivelEstructura("NOVA_S2N_1QR_" + TimeToString(time1), time1, low1, "S2 Nac 1QR", clrDarkOrange, false);
         }
       else if(high1 >= s2nSell1QR)
@@ -1285,37 +1328,38 @@ void EvaluarVela(datetime nyTime, int shift, bool soloReconstruccion, bool puede
          g_S2NDir = -1; g_S2NExtreme = high1; g_S2NXPivot = low1; g_S2NCHLevel = low1;
          g_S2NXPivotSet = false; g_S2NCHLockedFromX = false; g_S2NPullbackSeen = false; g_S2NReached50 = false; g_S2NInternalRef = high1;
          g_S2NStage = S2N_WAIT_CH;
+         s2nRecienActivado = true;
          DibujarNivelEstructura("NOVA_S2N_1QR_" + TimeToString(time1), time1, high1, "S2 Nac 1QR", clrDarkOrange, true);
         }
      }
 
-   //--- B. Progresión Setup 2 Nacimiento
-   if(InpEnableSetup2Nac && g_S2NStage != S2N_WAIT_1QR && g_S2NStage != S2N_FINISHED)
+   //--- B. Progresión Setup 2 Nacimiento (solo en velas posteriores al 1QR)
+   if(InpEnableSetup2Nac && !s2nRecienActivado && g_S2NStage != S2N_WAIT_1QR && g_S2NStage != S2N_FINISHED)
       ProcesarSetup2NacimientoVela(open1, high1, low1, close1, time1, soloReconstruccion, puedeColocar, esperando930,
                                     nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
 
    //--- C. Setup 2 Continuación: Quiebre opuesto >= 0.15% con cuerpo (se evalúa ANTES de S1: si activa, invalida S1)
-   bool structOkS2C = !InpS2C_RequireS2NStructure || (g_S2NStructureConfirmed && g_S2NStructDir == -g_FirstBreakDir);
+   bool structOkS2C       = !InpS2C_RequireS2NStructure || (g_S2NStructureConfirmed && g_S2NStructDir == -g_FirstBreakDir);
+   bool s2cRecienActivado = false;
    if(InpEnableSetup2Cont && g_HadSideBreakout && structOkS2C && g_S2C.stage == QE_INACTIVE && g_S2C.tradesToday == 0)
      {
       double s2cBuy2QR  = g_RangeHigh * (1.0 + InpS2C_2QR_Pct / 100.0);
       double s2cSell2QR = g_RangeLow  * (1.0 - InpS2C_2QR_Pct / 100.0);
-      bool s2cActivado  = false;
 
       if(g_FirstBreakDir == -1 && close1 >= s2cBuy2QR && close1 > open1)
         {
          g_S2C.dir = 1; g_S2C.extreme = high1; g_S2C.pbCount = 0; g_S2C.stage = QE_WAIT_1QE_PB;
          DibujarNivelEstructura("NOVA_S2C_2QR_" + TimeToString(time1), time1, high1, "S2C 2QR", clrTeal, true);
-         s2cActivado = true;
+         s2cRecienActivado = true;
         }
       else if(g_FirstBreakDir == 1 && close1 <= s2cSell2QR && close1 < open1)
         {
          g_S2C.dir = -1; g_S2C.extreme = low1; g_S2C.pbCount = 0; g_S2C.stage = QE_WAIT_1QE_PB;
          DibujarNivelEstructura("NOVA_S2C_2QR_" + TimeToString(time1), time1, low1, "S2C 2QR", clrMaroon, false);
-         s2cActivado = true;
+         s2cRecienActivado = true;
         }
 
-      if(s2cActivado && InpS2C_InvalidatesS1)
+      if(s2cRecienActivado && InpS2C_InvalidatesS1)
         {
          if(!soloReconstruccion)
             CancelarPendientesPorMagic(MAGIC_S1);
@@ -1330,26 +1374,29 @@ void EvaluarVela(datetime nyTime, int shift, bool soloReconstruccion, bool puede
      }
 
    //--- D. Setup 1: 1QR >= 0.20% con cuerpo (sigue operable aunque S2N se haya activado, mientras S2C no lo haya invalidado)
+   bool s1RecienActivado = false;
    if(InpEnableSetup1 && g_S1.stage == QE_INACTIVE && g_S1.tradesToday == 0)
      {
       if(close1 >= s1Buy1QR && close1 > open1)
         {
          g_S1.dir = 1; g_S1.extreme = high1; g_S1.pbCount = 0; g_S1.stage = QE_WAIT_1QE_PB;
+         s1RecienActivado = true;
          DibujarNivelEstructura("NOVA_S1_1QR_" + TimeToString(time1), time1, high1, "S1 1QR", clrDodgerBlue, true);
         }
       else if(close1 <= s1Sell1QR && close1 < open1)
         {
          g_S1.dir = -1; g_S1.extreme = low1; g_S1.pbCount = 0; g_S1.stage = QE_WAIT_1QE_PB;
+         s1RecienActivado = true;
          DibujarNivelEstructura("NOVA_S1_1QR_" + TimeToString(time1), time1, low1, "S1 1QR", clrCrimson, false);
         }
      }
 
-   //--- E. Progresión Motor Qe (Setup 1 y Setup 2 Continuación)
-   if(InpEnableSetup1 && g_S1.stage != QE_INACTIVE && g_S1.stage != QE_FINISHED)
+   //--- E. Progresión Motor Qe (estrictamente desde la vela SIGUIENTE al 1QR/2QR para no auto-contar 1QR como 1Qe)
+   if(InpEnableSetup1 && !s1RecienActivado && g_S1.stage != QE_INACTIVE && g_S1.stage != QE_FINISHED)
       ProcesarMotorQeVela(g_S1, MAGIC_S1, false, open1, high1, low1, close1, time1,
                           soloReconstruccion, puedeColocar, esperando930, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
 
-   if(InpEnableSetup2Cont && g_S2C.stage != QE_INACTIVE && g_S2C.stage != QE_FINISHED)
+   if(InpEnableSetup2Cont && !s2cRecienActivado && g_S2C.stage != QE_INACTIVE && g_S2C.stage != QE_FINISHED)
       ProcesarMotorQeVela(g_S2C, MAGIC_S2_CONT, true, open1, high1, low1, close1, time1,
                           soloReconstruccion, puedeColocar, esperando930, nyTime, nyAsiaStart, srvSessEnd, srvAsiaLastEntry);
   }
@@ -1933,6 +1980,15 @@ void ColocarOrdenMotorQe(QeMachine &m, ulong magic, bool esContinuacion, ENUM_OR
    double distSL = MathAbs(entryPrice - slPrice);
    if(distSL <= _Point) return;
 
+   // v3.15 Fuga 1: SL lado incorrecto (direccion vieja revivida en Asia) -> FINISHED, sin reintento por tick
+   bool slInvalido = (orderType == ORDER_TYPE_BUY_STOP) ? (slPrice >= entryPrice - minStop) : (slPrice <= entryPrice + minStop);
+   if(slInvalido && !soloReconstruccion)
+     {
+      TraceEv("SKIP", setupName, m.dir, entryPrice, slPrice, 0, 0, "SL lado incorrecto -> FINISHED");
+      m.stage = QE_FINISHED;
+      return;
+     }
+
    m.initRisk     = distSL;
    m.maxRRReached = 0.0;
    if(soloReconstruccion) { m.stage = QE_ORDER_ACTIVE; return; }
@@ -2050,7 +2106,114 @@ bool ExpiroVentanaPendiente(datetime nyTime, bool orderInAsia, datetime nyLastEn
    return false;
   }
 
-void GestionarMotorQe(QeMachine &m, ulong magic, string setupName, datetime nyTime, datetime srvTime,
+int BuscarIndiceCarryover(ulong ticket)
+  {
+   for(int i = 0; i < ArraySize(g_CarryPos); i++)
+      if(g_CarryPos[i].ticket == ticket) return i;
+   return -1;
+  }
+
+void CapturarPosicionesAlCambioDeDia()
+  {
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(!PositionSelectByTicket(ticket) || PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      ulong mg = (ulong)PositionGetInteger(POSITION_MAGIC);
+      if(mg != MAGIC_S1 && mg != MAGIC_S2_NAC && mg != MAGIC_S2_CONT) continue;
+      if(BuscarIndiceCarryover(ticket) >= 0) continue;
+
+      CarryoverPos cp;
+      cp.ticket       = ticket;
+      cp.magic        = mg;
+      cp.setupName    = (mg == MAGIC_S1) ? "S1" : ((mg == MAGIC_S2_CONT) ? "S2C" : "S2N");
+      cp.initRisk     = 0.0;
+      cp.maxRRReached = 0.0;
+      cp.open930Done  = true;
+      cp.graceDone    = false;
+      cp.inAsia       = false;
+
+      if(mg == MAGIC_S1 && g_S1.initRisk > 0.0)
+        {
+         cp.initRisk = g_S1.initRisk; cp.maxRRReached = g_S1.maxRRReached;
+         cp.open930Done = g_S1.open930Done; cp.graceDone = g_S1.graceDone; cp.inAsia = g_S1.orderInAsia;
+        }
+      else if(mg == MAGIC_S2_CONT && g_S2C.initRisk > 0.0)
+        {
+         cp.initRisk = g_S2C.initRisk; cp.maxRRReached = g_S2C.maxRRReached;
+         cp.open930Done = g_S2C.open930Done; cp.graceDone = g_S2C.graceDone; cp.inAsia = g_S2C.orderInAsia;
+        }
+      else if(mg == MAGIC_S2_NAC && g_S2NInitRisk > 0.0)
+        {
+         cp.initRisk = g_S2NInitRisk; cp.maxRRReached = g_S2NMaxRRReached;
+         cp.open930Done = g_S2NOpen930Done; cp.graceDone = g_S2NGraceDone; cp.inAsia = g_S2NOrderInAsia;
+        }
+
+      if(cp.initRisk <= 0.0)
+        {
+         string dummySL = "";
+         ulong posId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+         cp.initRisk = RecuperarInitRiskDesdeHistorial(ticket, posId, PositionGetDouble(POSITION_PRICE_OPEN),
+                                                       PositionGetDouble(POSITION_SL), g_ActiveDayKey, mg,
+                                                       dummySL, cp.maxRRReached, cp.inAsia);
+        }
+
+      int n = ArraySize(g_CarryPos);
+      ArrayResize(g_CarryPos, n + 1);
+      g_CarryPos[n] = cp;
+     }
+  }
+
+void GestionarPosicionesArrastradas(datetime nyTime, datetime srvTime, datetime srvDayStart)
+  {
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(!PositionSelectByTicket(ticket) || PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      ulong mg = (ulong)PositionGetInteger(POSITION_MAGIC);
+      if(mg != MAGIC_S1 && mg != MAGIC_S2_NAC && mg != MAGIC_S2_CONT) continue;
+      if((datetime)PositionGetInteger(POSITION_TIME) >= srvDayStart) continue;
+
+      int idx = BuscarIndiceCarryover(ticket);
+      if(idx < 0)
+        {
+         CarryoverPos cp;
+         cp.ticket       = ticket;
+         cp.magic        = mg;
+         cp.setupName    = (mg == MAGIC_S1) ? "S1" : ((mg == MAGIC_S2_CONT) ? "S2C" : "S2N");
+         cp.maxRRReached = 0.0;
+         cp.open930Done  = true;
+         cp.graceDone    = false;
+         cp.inAsia       = false;
+         string dummySL  = "";
+         ulong posId     = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+         cp.initRisk     = RecuperarInitRiskDesdeHistorial(ticket, posId, PositionGetDouble(POSITION_PRICE_OPEN),
+                                                           PositionGetDouble(POSITION_SL), 0, mg,
+                                                           dummySL, cp.maxRRReached, cp.inAsia);
+         idx = ArraySize(g_CarryPos);
+         ArrayResize(g_CarryPos, idx + 1);
+         g_CarryPos[idx] = cp;
+        }
+
+      trade.SetExpertMagicNumber(mg);
+      GestionarPosicionComun(ticket, mg, g_CarryPos[idx].setupName, nyTime, srvTime,
+                             g_CarryPos[idx].initRisk, g_CarryPos[idx].maxRRReached,
+                             g_CarryPos[idx].open930Done, g_CarryPos[idx].graceDone, g_CarryPos[idx].inAsia);
+     }
+
+   // Limpiar registros de posiciones arrastradas ya cerradas
+   for(int k = ArraySize(g_CarryPos) - 1; k >= 0; k--)
+     {
+      if(!PositionSelectByTicket(g_CarryPos[k].ticket))
+        {
+         int last = ArraySize(g_CarryPos) - 1;
+         if(k < last) g_CarryPos[k] = g_CarryPos[last];
+         ArrayResize(g_CarryPos, last);
+        }
+     }
+  }
+
+void GestionarMotorQe(QeMachine &m, ulong magic, string setupName, datetime nyTime, datetime srvTime, datetime srvDayStart,
                       bool esContinuacion, datetime nyLastEntry, datetime nyAsiaStart, datetime nyAsiaLastEntry)
   {
    trade.SetExpertMagicNumber(magic);
@@ -2081,11 +2244,16 @@ void GestionarMotorQe(QeMachine &m, ulong magic, string setupName, datetime nyTi
       ulong ticket = PositionGetTicket(i);
       if(PositionSelectByTicket(ticket) && PositionGetString(POSITION_SYMBOL) == _Symbol && (ulong)PositionGetInteger(POSITION_MAGIC) == magic)
         {
+         // Las posiciones abiertas antes de las 00:00 NY de hoy pertenecen a la sesión previa y se gestionan aparte
+         if((datetime)PositionGetInteger(POSITION_TIME) < srvDayStart) continue;
+
          tienePosicion = true;
          bool esNuevaPos = (m.stage != QE_IN_TRADE);
          if(esNuevaPos)
            {
             m.stage        = QE_IN_TRADE;
+            if(m.dir == 0)
+               m.dir = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? 1 : -1;
             m.tradesToday++;
             m.graceDone    = false;
             m.open930Done  = false;
@@ -2148,7 +2316,7 @@ void GestionarMotorQe(QeMachine &m, ulong magic, string setupName, datetime nyTi
       m.stage = QE_FINISHED;
   }
 
-void GestionarSetup2Nacimiento(datetime nyTime, datetime srvTime, datetime nyLastEntry, datetime nyAsiaStart, datetime nyAsiaLastEntry)
+void GestionarSetup2Nacimiento(datetime nyTime, datetime srvTime, datetime srvDayStart, datetime nyLastEntry, datetime nyAsiaStart, datetime nyAsiaLastEntry)
   {
    trade.SetExpertMagicNumber(MAGIC_S2_NAC);
 
@@ -2180,11 +2348,15 @@ void GestionarSetup2Nacimiento(datetime nyTime, datetime srvTime, datetime nyLas
       ulong ticket = PositionGetTicket(i);
       if(PositionSelectByTicket(ticket) && PositionGetString(POSITION_SYMBOL) == _Symbol && (ulong)PositionGetInteger(POSITION_MAGIC) == MAGIC_S2_NAC)
         {
+         if((datetime)PositionGetInteger(POSITION_TIME) < srvDayStart) continue;
+
          tienePosicion = true;
          bool esNuevaPos = (g_S2NStage != S2N_IN_TRADE);
          if(esNuevaPos)
            {
             g_S2NStage        = S2N_IN_TRADE;
+            if(g_S2NDir == 0)
+               g_S2NDir = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? 1 : -1;
             g_S2NTradesToday++;
             g_S2NGraceDone    = false;
             g_S2NOpen930Done  = false;
@@ -2242,6 +2414,7 @@ bool GestionarPosicionComun(ulong ticket, ulong magic, string setupName, datetim
    TimeToStruct(nyTime, dt);
    int minsNY      = dt.hour * 60 + dt.min;
    int minsClose15 = InpSessionEndHour * 60 + InpSessionEndMin - 5; // 15:40 NY
+   int minsAbierto = (int)((srvTime - openTime) / 60);
 
    bool bullfyOk = PuedeCerrarOModificarPorBullfy(ticket, srvTime, nyTime);
 
@@ -2261,10 +2434,11 @@ bool GestionarPosicionComun(ulong ticket, ulong magic, string setupName, datetim
         {
          double protSL = openPrice - dirPos * initRisk * 0.25;
          MoverSLSeguro(ticket, posType, curSL, protSL, curTP, setupName + "_930");
+         if(PositionSelectByTicket(ticket)) curSL = PositionGetDouble(POSITION_SL);
         }
      }
 
-   // 2. Regla Cierre 15:40 NY (exclusiva de sesión NY, nunca en Asia)
+   // 2. Regla opcional Cierre 15:40 NY (desactivada por defecto: se monitorea SL en Asia)
    if(InpExit_EndOfDay && InpClose1540Rule && !inAsia && minsNY >= minsClose15 && minsNY <= (minsClose15 + 15) && currentRR <= 0.15)
      {
       if(bullfyOk && trade.PositionClose(ticket))
@@ -2274,20 +2448,65 @@ bool GestionarPosicionComun(ulong ticket, ulong magic, string setupName, datetim
         }
      }
 
-   // 3. Regla Hora de Gracia: evaluar a los 60 min únicamente si aún NO hubo momentum (evita cerrar retrocesos horas después)
-   int minsAbierto = (int)((srvTime - openTime) / 60);
+   // 2b. Regla Nocturna / Fin de Asia: asegurar BE o leve positivo antes de dormir (o cierre viernes)
+   if(InpExit_EndOfDay && InpProtectAtAsiaEnd && bullfyOk && minsAbierto >= 45)
+     {
+      int minsBed = InpBedtimeProtectHour * 60 + InpBedtimeProtectMin;
+      bool ventanaDormir = (minsNY >= minsBed || minsNY < (InpSessionStartHour * 60)) ||
+                           (dt.day_of_week == 5 && minsNY >= (16 * 60 + 30));
+      if(ventanaDormir)
+        {
+         double bedSL = NormalizeDouble(openPrice + dirPos * initRisk * InpBedtimeLockRR, _Digits);
+         bool faltaBedSL = (posType == POSITION_TYPE_BUY) ? (curSL < bedSL - _Point) : (curSL == 0.0 || curSL > bedSL + _Point);
+         if(faltaBedSL)
+           {
+            MoverSLSeguro(ticket, posType, curSL, bedSL, curTP, setupName + "_ASIA_BE");
+            if(PositionSelectByTicket(ticket)) curSL = PositionGetDouble(POSITION_SL);
+           }
+        }
+     }
+
+   // 3. Regla de los 60 minutos: mitigar SL a -0.25R sin cerrar a mercado (o modo cierre legacy si se activa)
    if(InpExit_Grace && !graceDone && minsAbierto >= InpGracePeriodMins)
      {
-      graceDone = true;
-      if(maxRRReached < InpTrail_Step1_TrigRR && currentRR < InpGraceMinRR)
+      if(InpGraceCloseMarket)
         {
-         if(bullfyOk && trade.PositionClose(ticket))
+         graceDone = true;
+         if(maxRRReached < InpTrail_Step1_TrigRR && currentRR < InpGraceMinRR)
            {
-            TraceEv("EXIT", setupName, dirPos, curPrice, openPrice, currentRR, (double)minsAbierto, "GRACE ticket=" + IntegerToString((long)ticket));
-            return true;
+            if(bullfyOk && trade.PositionClose(ticket))
+              {
+               TraceEv("EXIT", setupName, dirPos, curPrice, openPrice, currentRR, (double)minsAbierto, "GRACE ticket=" + IntegerToString((long)ticket));
+               return true;
+              }
+            else
+               graceDone = false;
            }
-         else
-            graceDone = false;
+        }
+      else
+        {
+         double slMitigado = NormalizeDouble(openPrice + dirPos * initRisk * InpGraceMitigateSL_RR, _Digits);
+         bool yaMitigado   = (posType == POSITION_TYPE_BUY) ? (curSL >= slMitigado - _Point) : (curSL > 0.0 && curSL <= slMitigado + _Point);
+         if(yaMitigado)
+            graceDone = true;
+         else if(bullfyOk)
+           {
+            MoverSLSeguro(ticket, posType, curSL, slMitigado, curTP, setupName + "_GRACE_SL025");
+            if(PositionSelectByTicket(ticket)) curSL = PositionGetDouble(POSITION_SL);
+            yaMitigado = (posType == POSITION_TYPE_BUY) ? (curSL >= slMitigado - _Point) : (curSL > 0.0 && curSL <= slMitigado + _Point);
+            if(yaMitigado)
+               graceDone = true;
+            else
+              {
+               // Si a los 60m el precio está temporalmente más profundo que -0.25R, ajustar al micro-swing M5 post-entrada y esperar recuperación para fijar -0.25R
+               double microSw = InpGraceMicroSwing ? ObtenerSwingPostEntradaM5(posType, openTime, false, 1, 30) : 0.0; // v3.15 Fuga 2
+               if(microSw > 0.0)
+                 {
+                  MoverSLSeguro(ticket, posType, curSL, microSw, curTP, setupName + "_GRACE_SWING");
+                  if(PositionSelectByTicket(ticket)) curSL = PositionGetDouble(POSITION_SL);
+                 }
+              }
+           }
         }
      }
 
@@ -2307,7 +2526,7 @@ bool GestionarPosicionComun(ulong ticket, ulong magic, string setupName, datetim
    if(InpExit_Trailing && bullfyOk)
      {
       ENUM_TRAIL_MODE mode = (setupName == "S2N") ? InpTrailModeS2N : InpTrailModeQe;
-      AplicarTrailingProgresivo(ticket, posType, setupName, mode, openPrice, curSL, curTP, initRisk, maxRRReached);
+      AplicarTrailingProgresivo(ticket, posType, setupName, mode, openTime, openPrice, curSL, curTP, initRisk, maxRRReached);
      }
 
    return false;
@@ -2332,7 +2551,7 @@ bool ObtenerATRYCierreM5(double &atrOut, double &close1Out)
    return (atrOut > 0.0 && close1Out > 0.0);
   }
 
-void AplicarTrailingProgresivo(ulong ticket, long posType, string setupName, ENUM_TRAIL_MODE trailMode,
+void AplicarTrailingProgresivo(ulong ticket, long posType, string setupName, ENUM_TRAIL_MODE trailMode, datetime openTime,
                                double openPrice, double curSL, double curTP, double initRisk, double maxRRReached)
   {
    int dir        = (posType == POSITION_TYPE_BUY) ? 1 : -1;
@@ -2341,7 +2560,67 @@ void AplicarTrailingProgresivo(ulong ticket, long posType, string setupName, ENU
    bool usarSwing = false;
    bool usarATR   = false;
 
-   if(trailMode == TRAIL_NOVA_SWING)
+   if(trailMode == TRAIL_M5_SWING)
+     {
+      if(maxRRReached >= InpTrail_Step1_TrigRR)
+        {
+         floorSL = openPrice + dir * initRisk * InpTrail_Step1_SL_RR;
+         reason  = setupName + "_RR0.50";
+        }
+
+      if(maxRRReached >= InpSoftFloor_TrigRR) // v3.15 Fuga 3: piso suave
+        {
+         floorSL = openPrice + dir * initRisk * InpSoftFloor_SL_RR;
+         reason  = setupName + "_SOFT_FLOOR";
+        }
+
+      double stepFloorSL     = floorSL;
+      double targetSL        = stepFloorSL;
+      bool   haySwingSobreBE = false;
+
+      if(maxRRReached >= InpManualSwing_StartRR)
+        {
+         bool reqBOS = InpManualSwing_RequireBOS && (maxRRReached < InpManualSwing_NoBOSFromRR);
+         double swSL = ObtenerSwingPostEntradaM5(posType, openTime, reqBOS, InpSwingFractalBars, InpSwingLookbackBars);
+         if(swSL == 0.0 && !reqBOS && InpManualSwing_RequireBOS)
+            swSL = ObtenerSwingPostEntradaM5(posType, openTime, true, InpSwingFractalBars, InpSwingLookbackBars);
+
+         if(swSL > 0.0)
+           {
+            haySwingSobreBE = (posType == POSITION_TYPE_BUY) ? (swSL > openPrice) : (swSL < openPrice);
+            bool mejoraPiso = (stepFloorSL == 0.0) ||
+                              ((posType == POSITION_TYPE_BUY) ? (swSL > stepFloorSL) : (swSL < stepFloorSL));
+            if(mejoraPiso)
+              {
+               targetSL = swSL;
+               reason   = setupName + "_M5_SWING";
+              }
+           }
+        }
+
+      // Respaldo ATR exclusivo para impulsos verticales >= 2.0R donde aún no se formó ningún swing M5 sobre BE
+      if(InpManualSwing_UseATRFallback && maxRRReached >= InpManualSwing_FreeAboveRR && !haySwingSobreBE && g_ATRHandle != INVALID_HANDLE)
+        {
+         double atrVal = 0.0, close1Val = 0.0;
+         if(ObtenerATRYCierreM5(atrVal, close1Val))
+           {
+            double multATR = MathMax(2.5, InpTrailX_ATRMult);
+            double atrSL   = NormalizeDouble(close1Val - dir * multATR * atrVal, _Digits);
+            bool mejora    = (targetSL == 0.0) ||
+                             ((posType == POSITION_TYPE_BUY) ? (atrSL > targetSL) : (atrSL < targetSL));
+            if(mejora)
+              {
+               targetSL = atrSL;
+               reason   = setupName + "_ATR_VERT";
+              }
+           }
+        }
+
+      if(targetSL > 0.0)
+         MoverSLSeguro(ticket, posType, curSL, targetSL, curTP, reason);
+      return;
+     }
+   else if(trailMode == TRAIL_NOVA_SWING)
      {
       if(maxRRReached >= InpTrail_Step3_TrigRR)
         {
@@ -2385,7 +2664,7 @@ void AplicarTrailingProgresivo(ulong ticket, long posType, string setupName, ENU
          usarSwing = true;
      }
 
-   double stepFloorSL       = floorSL;
+   double stepFloorSL     = floorSL;
    double targetSL          = stepFloorSL;
    bool   haySwingSobrePiso = false;
 
@@ -2436,6 +2715,99 @@ void AplicarTrailingProgresivo(ulong ticket, long posType, string setupName, ENU
 
    if(targetSL > 0.0)
       MoverSLSeguro(ticket, posType, curSL, targetSL, curTP, reason);
+  }
+
+double ObtenerSwingPostEntradaM5(long posType, datetime openTime, bool requireBOS, int fractalBars, int lookbackBars)
+  {
+   int fBars = MathMax(1, fractalBars);
+   int pSec  = PeriodSeconds(PERIOD_M5);
+   if(pSec <= 0) pSec = 300;
+
+   datetime entryBarTime      = openTime - (openTime % pSec);
+   datetime lastClosedBarTime = iTime(_Symbol, PERIOD_M5, 1);
+   if(lastClosedBarTime <= entryBarTime) return 0.0;
+
+   int approxBars = (int)((lastClosedBarTime - entryBarTime) / pSec) + fBars + 4;
+   int maxCopy    = MathMin(300, MathMax(approxBars, MathMax(fBars * 2 + 5, lookbackBars)));
+
+   MqlRates rates[];
+   ArraySetAsSeries(rates, true);
+   int copied = CopyRates(_Symbol, PERIOD_M5, 1, maxCopy, rates);
+   if(copied <= fBars * 2) return 0.0;
+
+   int lastPostIdx = -1;
+   for(int idx = 0; idx < copied; idx++)
+     {
+      if(rates[idx].time > entryBarTime)
+         lastPostIdx = idx;
+      else
+         break;
+     }
+   if(lastPostIdx < fBars) return 0.0;
+
+   int entryAndPreLimit = MathMin(copied - 1, lastPostIdx + 1);
+   double buf = IndexPtsToPrice(InpSLBufferPts);
+
+   if(posType == POSITION_TYPE_BUY)
+     {
+      for(int i = fBars; i <= lastPostIdx; i++)
+        {
+         if(i + fBars >= copied) break;
+         bool esSwing = true;
+         for(int k = 1; k <= fBars; k++)
+           {
+            if(rates[i].low > rates[i - k].low || rates[i].low > rates[i + k].low)
+              { esSwing = false; break; }
+           }
+         if(!esSwing) continue;
+
+         if(requireBOS)
+           {
+            double prePeak = rates[i + 1].high;
+            for(int p = i + 1; p <= entryAndPreLimit; p++)
+               if(rates[p].high > prePeak) prePeak = rates[p].high;
+
+            bool bosOk = false;
+            for(int j = 0; j < i; j++)
+              {
+               if(rates[j].close > prePeak) { bosOk = true; break; }
+              }
+            if(!bosOk) continue;
+           }
+         return NormalizeDouble(rates[i].low - buf, _Digits);
+        }
+      return 0.0;
+     }
+   else
+     {
+      for(int i = fBars; i <= lastPostIdx; i++)
+        {
+         if(i + fBars >= copied) break;
+         bool esSwing = true;
+         for(int k = 1; k <= fBars; k++)
+           {
+            if(rates[i].high < rates[i - k].high || rates[i].high < rates[i + k].high)
+              { esSwing = false; break; }
+           }
+         if(!esSwing) continue;
+
+         if(requireBOS)
+           {
+            double preTrough = rates[i + 1].low;
+            for(int p = i + 1; p <= entryAndPreLimit; p++)
+               if(rates[p].low < preTrough) preTrough = rates[p].low;
+
+            bool bosOk = false;
+            for(int j = 0; j < i; j++)
+              {
+               if(rates[j].close < preTrough) { bosOk = true; break; }
+              }
+            if(!bosOk) continue;
+           }
+         return NormalizeDouble(rates[i].high + buf, _Digits);
+        }
+      return 0.0;
+     }
   }
 
 double ObtenerSwingEstructuralM5(long posType, int fractalBars, int lookbackBars)
@@ -3004,7 +3376,7 @@ void ActualizarHUD(datetime nyTime, string estado, color clrEstado)
                       DoubleToString(g_RangeHigh, _Digits) + " - " + DoubleToString(g_RangeLow, _Digits) + " (" + DoubleToString(g_RangePct, 2) + "%)" :
                       "Calculando...";
 
-   SetHudLine(0, x + 12, y + 10,  "NOVA BOT v3.13  |  NAS100 M5  |  NY Offset +" + IntegerToString(g_NYOffsetSec / 3600) + "h", clrGold, 9, true);
+   SetHudLine(0, x + 12, y + 10,  "NOVA BOT v3.15  |  NAS100 M5  |  NY Offset +" + IntegerToString(g_NYOffsetSec / 3600) + "h", clrGold, 9, true);
    SetHudLine(1, x + 12, y + 32,  "NY: " + TimeToString(nyTime, TIME_DATE|TIME_MINUTES) + " | " + TruncarTexto(estado, 36), clrEstado, 8, false);
    SetHudLine(2, x + 12, y + 50,  "Rango 02-07:  " + rangoTxt, clrWhite, 8, false);
    SetHudLine(3, x + 12, y + 68,  "Riesgo / Op:  " + DoubleToString(InpRiskPercent, 2) + "% ($" + DoubleToString(riesgoUSD, 2) + ")", clrSilver, 8, false);

@@ -47,3 +47,5 @@ Entorno común de simulación: `NAS100 M5` | `2023.01.11 – 2026.10.12` (~3 añ
 2. **Validación exacta de las dos hipótesis de diseño:**
    - Desacoplar `InpTrailModeS2N = TRAIL_NOVA_SWING` restauró el `100%` del rendimiento de `Setup 2 Nacimiento` (`+$4,911.93`, `PF 1.18`).
    - Restringir el ATR al cierre de barra M5 únicamente cuando aún no hay swing fractal sobre el piso (`InpTrailX_ATROnlyWithoutSwing = true`) eliminó el tope artificial de `~$1,540` de `v3.11`/`v3.12` y devolvió los runners completos de **`+$2,444.17` (`5R`)**.
+3. **Experimentos posteriores descartados (`v3.14` y `v3.15` en `archive/`):**
+   - Las pruebas con `TRAIL_M5_SWING` y desactivación del cierre de gracia / `15:40 NY` redujeron el retorno `2023–2026` a `+16.18%` / `PF 1.14` (`v3.14`) y `+11.17%` / `PF 1.12` (`v3.15`), con deterioro en `2025–2026`. Por ello **`v3.13` se ratifica como versión principal oficial** sobre la cual se contrastará el nuevo backtest manual trade por trade.
