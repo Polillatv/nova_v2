@@ -1,11 +1,11 @@
 ﻿//+------------------------------------------------------------------+
 //|                                                  Nova_Bot_v3.mq5 |
-//|           Estrategia Nova - Edición Fiel Manual v3.14            |
+//|           Estrategia Nova - Edición Fiel Manual v3.15            |
 //|   Calibración Fiel Backtest Manual + Bullfy + DST Auto + S1/2/3  |
 //|   Fix 1QR!=1Qe + Carryover 24/7 + Gracia SL -0.25R + Swing M5    |
 //+------------------------------------------------------------------+
 #property copyright "Estrategia Nova"
-#property version   "3.14"
+#property version   "3.15"
 
 #include <Trade\Trade.mqh>
 
@@ -23,7 +23,7 @@ enum ENUM_TRAIL_MODE
    TRAIL_NOVA_SWING = 0,         // Estándar Nova v3.10 (+0.50/-0.25, +0.80/+0.50, +1.80/+1.15, >=2.00 swings)
    TRAIL_OPTIMIZED  = 1,         // Optimizado (+0.65/BE, +1.00/+0.50, +1.50/+1.00, >=2.00 swings)
    TRAIL_ATR_SWING  = 2,         // Activo Qe v3.13 (escalones 1.2/1.5/1.8R + swings >=1.5R + ATR fallback)
-   TRAIL_M5_SWING   = 3          // Fiel Manual v3.14 (-0.25R inicial + Swings Estructurales M5 post-entrada)
+   TRAIL_M5_SWING   = 3          // Fiel Manual v3.15 (-0.25R inicial + Swings Estructurales M5 post-entrada)
   };
 
 input group "=== 1. HORARIOS, DST Y GRÁFICO ==="
@@ -127,6 +127,10 @@ input double          InpTrail_Step1_TrigRR         = 0.50;      // Escalón 1 (
 input double          InpTrail_Step1_SL_RR          = -0.25;     // Escalón 1 (común): mover SL a X RR (-0.25R)
 input double          InpManualSwing_StartRR        = 0.80;      // [M5_SWING] Desde +X RR activar trailing por swing M5
 input bool            InpManualSwing_RequireBOS     = true;      // [M5_SWING] Exigir BOS del swing antes de +2.0R
+input double          InpSoftFloor_TrigRR           = 1.25;      // [M5_SWING v3.15] Piso suave: activar a +X RR
+input double          InpSoftFloor_SL_RR            = 0.60;      // [M5_SWING v3.15] Piso suave: SL a +X RR
+input double          InpManualSwing_NoBOSFromRR    = 1.00;      // [M5_SWING v3.15] Desde +X RR aceptar fractal M5 sin exigir BOS
+input bool            InpGraceMicroSwing            = false;     // [v3.15] Micro-swing fBars=1 a los 60m (false = mantener SL)
 input double          InpManualSwing_FreeAboveRR    = 2.00;      // [M5_SWING] Desde +X RR aceptar todo fractal M5 post-entrada
 input bool            InpManualSwing_UseATRFallback = true;      // [M5_SWING] Respaldo ATR en impulsos verticales >=2R sin swing
 input double          InpTrail_Step2_TrigRR         = 0.80;      // [Legacy/ATR] Escalón 2: activar al llegar a +X RR
@@ -662,7 +666,7 @@ int OnInit()
 
    TraceInit();
 
-   Print("NOVA v3.14 | ", _Symbol, " ", EnumToString(_Period),
+   Print("NOVA v3.15 | ", _Symbol, " ", EnumToString(_Period),
          " | autoDST=", (InpAutoDST ? "ON" : "OFF"),
          " | offsetNY=", (g_NYOffsetSec / 3600), "h",
          " | trailQe=", EnumToString(InpTrailModeQe),
@@ -1976,6 +1980,15 @@ void ColocarOrdenMotorQe(QeMachine &m, ulong magic, bool esContinuacion, ENUM_OR
    double distSL = MathAbs(entryPrice - slPrice);
    if(distSL <= _Point) return;
 
+   // v3.15 Fuga 1: SL lado incorrecto (direccion vieja revivida en Asia) -> FINISHED, sin reintento por tick
+   bool slInvalido = (orderType == ORDER_TYPE_BUY_STOP) ? (slPrice >= entryPrice - minStop) : (slPrice <= entryPrice + minStop);
+   if(slInvalido && !soloReconstruccion)
+     {
+      TraceEv("SKIP", setupName, m.dir, entryPrice, slPrice, 0, 0, "SL lado incorrecto -> FINISHED");
+      m.stage = QE_FINISHED;
+      return;
+     }
+
    m.initRisk     = distSL;
    m.maxRRReached = 0.0;
    if(soloReconstruccion) { m.stage = QE_ORDER_ACTIVE; return; }
@@ -2486,7 +2499,7 @@ bool GestionarPosicionComun(ulong ticket, ulong magic, string setupName, datetim
             else
               {
                // Si a los 60m el precio está temporalmente más profundo que -0.25R, ajustar al micro-swing M5 post-entrada y esperar recuperación para fijar -0.25R
-               double microSw = ObtenerSwingPostEntradaM5(posType, openTime, false, 1, 30);
+               double microSw = InpGraceMicroSwing ? ObtenerSwingPostEntradaM5(posType, openTime, false, 1, 30) : 0.0; // v3.15 Fuga 2
                if(microSw > 0.0)
                  {
                   MoverSLSeguro(ticket, posType, curSL, microSw, curTP, setupName + "_GRACE_SWING");
@@ -2555,13 +2568,19 @@ void AplicarTrailingProgresivo(ulong ticket, long posType, string setupName, ENU
          reason  = setupName + "_RR0.50";
         }
 
+      if(maxRRReached >= InpSoftFloor_TrigRR) // v3.15 Fuga 3: piso suave
+        {
+         floorSL = openPrice + dir * initRisk * InpSoftFloor_SL_RR;
+         reason  = setupName + "_SOFT_FLOOR";
+        }
+
       double stepFloorSL     = floorSL;
       double targetSL        = stepFloorSL;
       bool   haySwingSobreBE = false;
 
       if(maxRRReached >= InpManualSwing_StartRR)
         {
-         bool reqBOS = InpManualSwing_RequireBOS && (maxRRReached < InpManualSwing_FreeAboveRR);
+         bool reqBOS = InpManualSwing_RequireBOS && (maxRRReached < InpManualSwing_NoBOSFromRR);
          double swSL = ObtenerSwingPostEntradaM5(posType, openTime, reqBOS, InpSwingFractalBars, InpSwingLookbackBars);
          if(swSL == 0.0 && !reqBOS && InpManualSwing_RequireBOS)
             swSL = ObtenerSwingPostEntradaM5(posType, openTime, true, InpSwingFractalBars, InpSwingLookbackBars);
@@ -2645,7 +2664,7 @@ void AplicarTrailingProgresivo(ulong ticket, long posType, string setupName, ENU
          usarSwing = true;
      }
 
-   double stepFloorSL       = floorSL;
+   double stepFloorSL     = floorSL;
    double targetSL          = stepFloorSL;
    bool   haySwingSobrePiso = false;
 
@@ -3357,7 +3376,7 @@ void ActualizarHUD(datetime nyTime, string estado, color clrEstado)
                       DoubleToString(g_RangeHigh, _Digits) + " - " + DoubleToString(g_RangeLow, _Digits) + " (" + DoubleToString(g_RangePct, 2) + "%)" :
                       "Calculando...";
 
-   SetHudLine(0, x + 12, y + 10,  "NOVA BOT v3.14  |  NAS100 M5  |  NY Offset +" + IntegerToString(g_NYOffsetSec / 3600) + "h", clrGold, 9, true);
+   SetHudLine(0, x + 12, y + 10,  "NOVA BOT v3.15  |  NAS100 M5  |  NY Offset +" + IntegerToString(g_NYOffsetSec / 3600) + "h", clrGold, 9, true);
    SetHudLine(1, x + 12, y + 32,  "NY: " + TimeToString(nyTime, TIME_DATE|TIME_MINUTES) + " | " + TruncarTexto(estado, 36), clrEstado, 8, false);
    SetHudLine(2, x + 12, y + 50,  "Rango 02-07:  " + rangoTxt, clrWhite, 8, false);
    SetHudLine(3, x + 12, y + 68,  "Riesgo / Op:  " + DoubleToString(InpRiskPercent, 2) + "% ($" + DoubleToString(riesgoUSD, 2) + ")", clrSilver, 8, false);
